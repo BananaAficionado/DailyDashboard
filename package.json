@@ -1,0 +1,33 @@
+{
+  "name": "ultrawide-daily-dashboard",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node tests/static-checks.mjs && node tests/drag-layout-mock.mjs",
+    "test:ui": "node tests/ui-smoke.mjs",
+    "test:short": "node tests/short-viewport.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:portable": "tauri build --no-bundle"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.6.0",
+    "@tauri-apps/plugin-opener": "^2.3.0",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.6.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7"
+  }
+}

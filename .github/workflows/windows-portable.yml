@@ -1,0 +1,33 @@
+name: Windows Portable
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build portable executable
+        run: npm run tauri:build:portable
+
+      - name: Upload portable executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-dashboard-windows-portable
+          path: src-tauri/target/release/V0.3_Daily-Dashboard.exe
