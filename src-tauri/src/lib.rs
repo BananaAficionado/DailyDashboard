@@ -60,6 +60,11 @@ struct StoredSettings {
     weather_location: Option<serde_json::Value>,
     widget_layout: Option<serde_json::Value>,
     selected_calendar_ids: Option<Vec<String>>,
+    app_scale: Option<u16>,
+    adsb_location: Option<serde_json::Value>,
+    adsb_api_url: Option<String>,
+    adsb_api_key: Option<String>,
+    adsb_graphic_only: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -408,6 +413,33 @@ async fn decode_token_response(response: reqwest::Response) -> Result<TokenRespo
     serde_json::from_str(&text).map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+async fn fetch_adsb(url: String, api_key: Option<String>) -> Result<serde_json::Value, String> {
+    let parsed = Url::parse(&url).map_err(|err| format!("Invalid ADS-B API URL: {err}"))?;
+    if parsed.scheme() != "https" && parsed.scheme() != "http" {
+        return Err("ADS-B API URL must use HTTP or HTTPS".to_string());
+    }
+    let rapidapi_host = parsed.host_str().map(str::to_string);
+    let client = reqwest::Client::builder()
+        .user_agent("Daily Dashboard ADS-B viewer")
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|err| err.to_string())?;
+    let mut request = client.get(parsed);
+    if let Some(key) = api_key.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) {
+        request = request.header("x-rapidapi-key", &key);
+        if let Some(host) = rapidapi_host {
+            request = request.header("x-rapidapi-host", host);
+        }
+    }
+    let response = request.send().await.map_err(|err| format!("ADS-B request failed: {err}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("ADS-B request failed: {status}"));
+    }
+    response.json().await.map_err(|err| format!("Invalid ADS-B response: {err}"))
+}
+
 fn read_settings(app: &AppHandle) -> Result<StoredSettings, String> {
     let path = settings_path(app)?;
     if !path.exists() {
@@ -518,6 +550,7 @@ pub fn run() {
             exchange_oauth_code,
             refresh_access_token,
             fetch_icalendar,
+            fetch_adsb,
             run_terminal_command
         ])
         .run(tauri::generate_context!())

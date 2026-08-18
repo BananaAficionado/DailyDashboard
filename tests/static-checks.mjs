@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 const capabilities = JSON.parse(await readFile(new URL("../src-tauri/capabilities/default.json", import.meta.url), "utf8"));
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+const mapSource = await readFile(new URL("../src/InteractiveMap.tsx", import.meta.url), "utf8");
 const cssSource = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 const htmlSource = await readFile(new URL("../index.html", import.meta.url), "utf8");
 const rustSource = await readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
@@ -17,7 +18,7 @@ assert(
 assert(
   appSource.includes("onToggleFullscreen") &&
     appSource.includes("<strong>Application</strong>") &&
-    appSource.includes('const APP_VERSION = "V0.3"') &&
+    appSource.includes('const APP_VERSION = "V0.4"') &&
     appSource.includes("Version {APP_VERSION}") &&
     appSource.includes("Toggle Full Screen") &&
     cssSource.includes(".settings-action-button") &&
@@ -26,10 +27,10 @@ assert(
 );
 
 assert(
-  tauriConfig.version === "0.3.0" &&
-    tauriConfig.mainBinaryName === "V0.3_Daily-Dashboard" &&
+  tauriConfig.version === "0.4.0" &&
+    tauriConfig.mainBinaryName === "V0.4_Daily-Dashboard" &&
     tauriConfig.bundle.targets.includes("nsis"),
-  "release metadata is V0.3 with the prefixed main binary name"
+  "release metadata is V0.4 with the prefixed main binary name"
 );
 
 assert(
@@ -54,11 +55,13 @@ assert(
   appSource.includes("dashboardWidgets") &&
     appSource.includes("dashboard-grid") &&
     appSource.includes("DEFAULT_WIDGET_LAYOUT") &&
-    appSource.includes("order: [\"calendar\", \"spotify\", \"weather\", \"codex\", \"terminal\"]") &&
+    appSource.includes("order: [\"calendar\", \"spotify\", \"weather\", \"aircraft\", \"codex\", \"terminal\"]") &&
     appSource.includes("visible: [\"calendar\", \"spotify\", \"weather\"]") &&
     appSource.includes("stacks: [[\"spotify\", \"weather\"]]") &&
     appSource.includes("buildDashboardEntries") &&
     appSource.includes("addWidgetToLayout") &&
+    appSource.includes("packWidgetStacks") &&
+    appSource.includes("style={{ gridColumn, gridRow }}") &&
     appSource.includes("widget-size-${widgetSize(widget)}") &&
     appSource.includes("toggleWidget") &&
     appSource.includes("hideWidget") &&
@@ -67,6 +70,41 @@ assert(
     appSource.includes("empty-wave-field") &&
     appSource.includes("empty-dashboard-content"),
   "saved widget layout tracks visible dashboard widgets, calendar as a widget, and the four allowed widget sizes"
+);
+
+assert(
+  appSource.includes("type AppScale = 75 | 100 | 125 | 150 | 200") &&
+    appSource.includes("APP_SCALES") &&
+    appSource.includes("Application scale") &&
+    cssSource.includes("zoom: var(--app-scale)") &&
+    rustSource.includes("app_scale"),
+  "application scaling is persisted and offers the five requested sticky sizes"
+);
+
+assert(
+  appSource.includes("AircraftPanel") &&
+    appSource.includes("DEFAULT_ADSB_API_URL") &&
+    appSource.includes("fetch_adsb") &&
+    appSource.includes("Graphic only") &&
+    appSource.includes("Set centre") &&
+    rustSource.includes("async fn fetch_adsb") &&
+    cssSource.includes(".aircraft-detail") &&
+    cssSource.includes(".aircraft-map-wrap > .interactive-map") &&
+    cssSource.includes("height: 100%"),
+  "live ADS-B aircraft widget supports map navigation, aircraft selection, graphic-only mode, and persisted provider settings"
+);
+
+assert(
+  appSource.includes("api.rainviewer.com/public/weather-maps.json") &&
+    appSource.includes("Weather data by RainViewer") &&
+    appSource.includes('page === "forecast" ? "1 / 2" : "2 / 2"') &&
+    appSource.includes("radarMaxZoom={7}") &&
+    appSource.includes("onMonochromeChange") &&
+    mapSource.includes("bounds.width / Math.max(1, element.clientWidth)") &&
+    mapSource.includes("data-center-longitude") &&
+    cssSource.includes(".weather-radar-page") &&
+    cssSource.includes(".interactive-map.map-monochrome .map-base-tile"),
+  "weather widget provides a separately pageable and attributed live radar map"
 );
 
 assert(
@@ -164,6 +202,9 @@ assert(
   appSource.includes("icalCalendarUrl") &&
     appSource.includes("loadIcalCalendar") &&
     appSource.includes("parseIcalendarFeed") &&
+    appSource.includes("expandIcalRecurrence") &&
+    appSource.includes("RECURRENCE-ID") &&
+    appSource.includes("EXDATE") &&
     appSource.includes("webcal://") &&
     appSource.includes("readOnly: true") &&
     appSource.includes("<strong>iCalendar</strong>") &&
@@ -188,12 +229,9 @@ assert(
 
 assert(
   appSource.includes("gridColumn: dayIndex + 2") &&
-    appSource.includes('["06", "Monday"]') &&
-    appSource.includes('["07", "Tuesday"]') &&
-    appSource.includes('["08", "Wednesday"]') &&
-    appSource.includes('["09", "Thursday"]') &&
-    appSource.includes('["10", "Friday"]'),
-  "timed calendar columns are explicitly aligned after the time gutter and mock meetings are named Monday through Friday"
+    appSource.includes('["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]') &&
+    appSource.includes("const monday = addDays(startOfWeek(new Date()), 1)"),
+  "timed calendar columns are explicitly aligned after the time gutter and mock meetings remain current Monday through Friday"
 );
 
 assert(
@@ -273,7 +311,7 @@ assert(
     cssSource.includes("grid-template-rows: minmax(0, 1fr) minmax(0, 1fr)") &&
     cssSource.includes(".app-shell.thirds-stacked .weather-panel .five-day-forecast") &&
     cssSource.includes("@media (max-height: 430px)") &&
-    cssSource.includes("--dashboard-half-height: calc((100vh - 8px) / 2)") &&
+    cssSource.includes("--dashboard-half-height: calc((100% - 8px) / 2)") &&
     !cssSource.includes("--dashboard-half-height: max(260px"),
   "weather widget uses Open-Meteo, has readable location errors, close controls, reverse-geocoded current location, and forecast views"
 );

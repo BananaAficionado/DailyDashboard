@@ -12,6 +12,7 @@ import {
   ListMusic,
   Maximize2,
   Pause,
+  Plane,
   Play,
   RefreshCcw,
   Search,
@@ -29,6 +30,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { CSSProperties, DragEvent, FormEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { InteractiveMap, type MapPoint } from "./InteractiveMap";
+import { expandIcalRecurrence, icalDateKey } from "./icalRecurrence";
 
 type ViewMode = "week" | "day";
 type CalendarStyle = "google" | "outlook";
@@ -59,11 +62,23 @@ type StoredSettings = EnvConfig & {
   weatherLocation?: WeatherLocation;
   widgetLayout?: WidgetLayout;
   selectedCalendarIds?: string[];
+  appScale?: AppScale;
+  adsbLocation?: WeatherLocation;
+  adsbApiUrl?: string;
+  adsbApiKey?: string;
+  adsbGraphicOnly?: boolean;
 };
 
-type WidgetId = "calendar" | "spotify" | "weather" | "codex" | "terminal";
+type WidgetId = "calendar" | "spotify" | "weather" | "aircraft" | "codex" | "terminal";
+type AppScale = 75 | 100 | 125 | 150 | 200;
 type WidgetLayoutMode = "thirds" | "focus";
 type WidgetSize = "full" | "wide" | "tall" | "half";
+type DashboardEntry = {
+  widget: WidgetId;
+  size: WidgetSize;
+  gridColumn: string;
+  gridRow: string;
+};
 type WidgetDropPosition = "top" | "bottom";
 type WidgetBumpSide = "before" | "after";
 type GridDropMode = "third-left" | "wide-centre" | "third-right";
@@ -189,6 +204,19 @@ type WeatherDay = {
   hourly: { time: string; temp: number; feelsLike: number; precip: number }[];
 };
 
+type Aircraft = {
+  id: string;
+  flight: string;
+  registration: string;
+  aircraftType: string;
+  latitude: number;
+  longitude: number;
+  altitude: number | null;
+  speed: number | null;
+  heading: number;
+  verticalRate: number | null;
+};
+
 type CodexActivity = {
   prompt: string;
   summary: string;
@@ -233,19 +261,22 @@ const DEFAULT_GOOGLE_REDIRECT_URI = "http://127.0.0.1:8911";
 const DEFAULT_MICROSOFT_REDIRECT_URI = "http://localhost:8912";
 const DEFAULT_CODEX_OPEN_URL = "codex://threads/new";
 const DEFAULT_CODEX_WEB_URL = "https://chatgpt.com/codex";
-const APP_VERSION = "V0.3";
+const DEFAULT_ADSB_API_URL = "https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{radius}";
+const APP_SCALES: AppScale[] = [75, 100, 125, 150, 200];
+const APP_VERSION = "V0.4";
 const RAIL_HIDE_DELAY_MS = 3_000;
 const EMPTY_DASHBOARD_IDLE_DELAY_MS = 15_000;
 const DEFAULT_WIDGET_SIZES: Record<WidgetId, WidgetSize> = {
   calendar: "wide",
   spotify: "half",
   weather: "half",
+  aircraft: "tall",
   codex: "tall",
   terminal: "tall",
 };
 const DEFAULT_WIDGET_LAYOUT: WidgetLayout = {
   mode: "thirds",
-  order: ["calendar", "spotify", "weather", "codex", "terminal"],
+  order: ["calendar", "spotify", "weather", "aircraft", "codex", "terminal"],
   visible: ["calendar", "spotify", "weather"],
   thirdsStacked: true,
   sizes: DEFAULT_WIDGET_SIZES,
@@ -284,6 +315,8 @@ function App() {
   const [terminalEntries, setTerminalEntries] = useState<TerminalEntry[]>([]);
   const [terminalRunning, setTerminalRunning] = useState(false);
   const [weather, setWeather] = useState<WeatherData | null>(null);
+  const [aircraft, setAircraft] = useState<Aircraft[]>([]);
+  const [aircraftError, setAircraftError] = useState("");
   const [weatherQuery, setWeatherQuery] = useState("");
   const [weatherSearching, setWeatherSearching] = useState(false);
   const [now, setNow] = useState(new Date());
@@ -341,6 +374,7 @@ function App() {
   const widgetSize = (widget: WidgetId) => dashboardEntries.find((entry) => entry.widget === widget)?.size || DEFAULT_WIDGET_SIZES[widget];
   const widgetCompact = (widget: WidgetId) => widgetSize(widget) === "half";
   const calendarStyle = normalizeCalendarStyle(settings.calendarStyle);
+  const appScale = normalizeAppScale(settings.appScale);
   const railWidgetActive = (widget: WidgetId) => visibleWidgetSet.has(widget);
 
   function clearRailHideTimer() {
@@ -576,10 +610,10 @@ function App() {
           }
           return response.text();
         });
-    const parsed = parseIcalendarFeed(feedText, feedUrl);
+    const parsed = parseIcalendarFeed(feedText, feedUrl, visibleDays);
     setCalendarSources([parsed.source]);
     setEvents(parsed.events);
-  }, [settings.icalCalendarUrl]);
+  }, [settings.icalCalendarUrl, visibleDays]);
 
   const loadCalendar = useCallback(async () => {
     if (isMockMode()) {
@@ -816,11 +850,48 @@ function App() {
     loadWeather(settings.weatherLocation).catch((err) => setError(String(err)));
   }, [settings.weatherLocation]);
 
+  const loadAircraft = useCallback(async () => {
+    const location = settings.adsbLocation || settings.weatherLocation;
+    if (!location || !visibleWidgetSet.has("aircraft")) return;
+    if (isMockMode()) {
+      setAircraft(mockAircraft(location));
+      setAircraftError("");
+      return;
+    }
+    const endpoint = (settings.adsbApiUrl || DEFAULT_ADSB_API_URL)
+      .replace("{lat}", location.latitude.toFixed(5))
+      .replace("{lon}", location.longitude.toFixed(5))
+      .replace("{radius}", "100");
+    try {
+      const data = isTauri()
+        ? await invoke<unknown>("fetch_adsb", { url: endpoint, apiKey: settings.adsbApiKey || null })
+        : await fetch(endpoint, { headers: settings.adsbApiKey ? { "x-rapidapi-key": settings.adsbApiKey, "x-rapidapi-host": new URL(endpoint).host } : undefined }).then(async (response) => {
+            if (!response.ok) throw new Error(`ADS-B request failed: ${response.status}`);
+            return response.json();
+          });
+      setAircraft(normalizeAircraft(data));
+      setAircraftError("");
+    } catch (err) {
+      setAircraftError(String(err).replace(/^Error:\s*/, ""));
+    }
+  }, [settings.adsbApiKey, settings.adsbApiUrl, settings.adsbLocation, settings.weatherLocation, widgetLayout.visible.join("|")]);
+
+  useEffect(() => {
+    loadAircraft();
+    const timer = window.setInterval(loadAircraft, 10_000);
+    return () => window.clearInterval(timer);
+  }, [loadAircraft]);
+
   async function refreshDashboard() {
     setIsRefreshing(true);
     setError("");
     try {
-      await Promise.all([loadCalendar(), loadSpotify()]);
+      await Promise.all([
+        loadCalendar(),
+        loadSpotify(),
+        loadAircraft(),
+        settings.weatherLocation ? loadWeather(settings.weatherLocation) : Promise.resolve(),
+      ]);
       setAuthStatus("Refreshed");
     } finally {
       window.setTimeout(() => setIsRefreshing(false), 250);
@@ -1558,7 +1629,10 @@ function App() {
   };
 
   return (
-    <main className={`app-shell ${railPeekOpen ? "rail-peek-open" : "rail-peek-closed"} ${rearrangeMode ? "rearrange-mode" : ""} ${draggedWidget ? "dragging-widget" : ""}`}>
+    <main
+      className={`app-shell ${railPeekOpen ? "rail-peek-open" : "rail-peek-closed"} ${rearrangeMode ? "rearrange-mode" : ""} ${draggedWidget ? "dragging-widget" : ""}`}
+      style={{ "--app-scale": appScale / 100 } as CSSProperties}
+    >
       <aside
         className="rail"
         onPointerEnter={showRail}
@@ -1579,6 +1653,9 @@ function App() {
         </button>
         <button className={`rail-button ${railWidgetActive("weather") ? "active" : ""}`} title="Weather" onClick={() => toggleWidget("weather")}>
           <CloudSun size={20} />
+        </button>
+        <button className={`rail-button ${railWidgetActive("aircraft") ? "active" : ""}`} title="Live aircraft" onClick={() => toggleWidget("aircraft")}>
+          <Plane size={20} />
         </button>
         <button className={`rail-button ${railWidgetActive("codex") ? "active" : ""}`} title="Codex" onClick={() => toggleWidget("codex")}>
           <Bot size={20} />
@@ -1666,10 +1743,11 @@ function App() {
             </div>
           </div>
         ) : null}
-        {dashboardWidgets.map((widget) => (
+        {dashboardEntries.map(({ widget, gridColumn, gridRow }) => (
           <div
             key={widget}
             data-widget={widget}
+            style={{ gridColumn, gridRow }}
             className={`widget-slot dashboard-widget widget-size-${widgetSize(widget)} ${draggedWidget === widget ? "drag-source" : ""} ${dragPreview?.type === "split" && dragPreview.target === widget ? `split-preview split-${dragPreview.position}` : ""} ${dragPreview?.type === "bump" && dragPreview.target === widget ? `bump-preview bump-${dragPreview.side}` : ""}`}
             onDragEnd={() => {
               setDraggedWidget(null);
@@ -1907,6 +1985,19 @@ function App() {
                 onSearch={() => searchWeatherLocation(weatherQuery).catch((err) => setError(String(err)))}
                 onUseCurrentLocation={() => useCurrentWeatherLocation().catch((err) => setError(friendlyWeatherError(err)))}
                 onChangeLocation={() => saveSettings({ ...settings, weatherLocation: undefined })}
+              />
+            ) : widget === "aircraft" ? (
+              <AircraftPanel
+                aircraft={aircraft}
+                error={aircraftError}
+                location={settings.adsbLocation || settings.weatherLocation}
+                graphicOnly={Boolean(settings.adsbGraphicOnly)}
+                compact={widgetCompact("aircraft")}
+                onGraphicOnlyChange={(graphicOnly) => saveSettings({ ...settings, adsbGraphicOnly: graphicOnly })}
+                onLocationChange={(location) => saveSettings({ ...settings, adsbLocation: location })}
+                onUseCurrentLocation={() => resolveCurrentWeatherLocation().then((location) => saveSettings({ ...settings, adsbLocation: location })).catch((err) => setError(friendlyWeatherError(err)))}
+                onFocus={() => focusWidget("aircraft")}
+                onClose={() => hideWidget("aircraft")}
               />
             ) : widget === "codex" ? (
               <CodexPanel
@@ -2282,6 +2373,94 @@ function TerminalPanel({
   );
 }
 
+function AircraftPanel({
+  aircraft,
+  error,
+  location,
+  graphicOnly,
+  compact,
+  onGraphicOnlyChange,
+  onLocationChange,
+  onUseCurrentLocation,
+  onFocus,
+  onClose,
+}: {
+  aircraft: Aircraft[];
+  error: string;
+  location?: WeatherLocation;
+  graphicOnly: boolean;
+  compact: boolean;
+  onGraphicOnlyChange: (value: boolean) => void;
+  onLocationChange: (location: WeatherLocation) => void;
+  onUseCurrentLocation: () => void;
+  onFocus: () => void;
+  onClose: () => void;
+}) {
+  const fallback = location || { name: "Melbourne", latitude: -37.8136, longitude: 144.9631 };
+  const [center, setCenter] = useState({ latitude: fallback.latitude, longitude: fallback.longitude });
+  const [zoom, setZoom] = useState(7);
+  const [monochrome, setMonochrome] = useState(true);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = aircraft.find((item) => item.id === selectedId) || null;
+
+  useEffect(() => {
+    if (location) setCenter({ latitude: location.latitude, longitude: location.longitude });
+  }, [location?.latitude, location?.longitude]);
+
+  const points: MapPoint[] = aircraft.map((item) => ({
+    id: item.id,
+    latitude: item.latitude,
+    longitude: item.longitude,
+    heading: item.heading,
+    label: graphicOnly ? undefined : item.flight || item.registration,
+    title: `${item.flight || "Aircraft"} · ${formatAltitude(item.altitude)} · ${formatSpeed(item.speed)}`,
+  }));
+
+  return (
+    <section className={`widget-panel aircraft-panel ${compact ? "compact" : ""}`} onDoubleClick={onFocus}>
+      <div className="aircraft-header">
+        <span>Live Aircraft</span>
+        <div>
+          <button className={graphicOnly ? "selected" : ""} onClick={() => onGraphicOnlyChange(!graphicOnly)} title="Toggle graphic-only aircraft">Graphic only</button>
+          <button className="icon-button" onClick={onClose} title="Hide Live Aircraft"><X size={18} /></button>
+        </div>
+      </div>
+      <div className="aircraft-map-wrap">
+        <InteractiveMap
+          center={center}
+          zoom={zoom}
+          points={points}
+          selectedPointId={selectedId}
+          monochrome={monochrome}
+          onViewChange={(nextCenter, nextZoom) => { setCenter(nextCenter); setZoom(nextZoom); }}
+          onSelectPoint={setSelectedId}
+          onMonochromeChange={setMonochrome}
+        />
+        <div className="aircraft-map-toolbar">
+          <button onClick={() => { setCenter({ latitude: fallback.latitude, longitude: fallback.longitude }); setZoom(7); }}>Home</button>
+          <button onClick={onUseCurrentLocation}>Use location</button>
+          <button onClick={() => onLocationChange({ name: "Map centre", ...center })}>Set centre</button>
+          <span>{aircraft.length} live</span>
+        </div>
+        {error ? <div className="map-feed-error">{error}</div> : null}
+        {selected && !graphicOnly ? (
+          <div className="aircraft-detail">
+            <button className="icon-button" onClick={() => setSelectedId(null)} title="Close aircraft details"><X size={15} /></button>
+            <Plane size={30} style={{ transform: `rotate(${selected.heading - 45}deg)` }} />
+            <div><strong>{selected.flight || selected.registration || selected.id}</strong><span>{selected.aircraftType || "Unknown type"}</span></div>
+            <dl>
+              <div><dt>Registration</dt><dd>{selected.registration || "—"}</dd></div>
+              <div><dt>Altitude</dt><dd>{formatAltitude(selected.altitude)}</dd></div>
+              <div><dt>Speed</dt><dd>{formatSpeed(selected.speed)}</dd></div>
+              <div><dt>Vertical</dt><dd>{selected.verticalRate == null ? "—" : `${Math.round(selected.verticalRate)} ft/min`}</dd></div>
+            </dl>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function WeatherPanel({
   location,
   weather,
@@ -2312,6 +2491,12 @@ function WeatherPanel({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [forecastMode, setForecastMode] = useState<"day" | "five">("day");
   const [forecastDayIndex, setForecastDayIndex] = useState(0);
+  const [page, setPage] = useState<"forecast" | "radar">("forecast");
+  const [radarFrame, setRadarFrame] = useState<{ host: string; path: string; time: number } | null>(null);
+  const [radarError, setRadarError] = useState("");
+  const [radarCenter, setRadarCenter] = useState(() => ({ latitude: location?.latitude || -37.8136, longitude: location?.longitude || 144.9631 }));
+  const [radarZoom, setRadarZoom] = useState(7);
+  const [radarMonochrome, setRadarMonochrome] = useState(true);
   const showSetup = !location || settingsOpen;
   const forecastDays = weather?.days?.length ? weather.days : weather ? [{
     date: new Date().toISOString(),
@@ -2328,11 +2513,41 @@ function WeatherPanel({
     setForecastDayIndex((index) => Math.min(index, Math.max(0, forecastDays.length - 1)));
   }, [forecastDays.length]);
 
+  useEffect(() => {
+    if (location) setRadarCenter({ latitude: location.latitude, longitude: location.longitude });
+  }, [location?.latitude, location?.longitude]);
+
+  useEffect(() => {
+    if (page !== "radar") return;
+    let active = true;
+    const loadRadar = () => fetch("https://api.rainviewer.com/public/weather-maps.json")
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Radar request failed: ${response.status}`);
+        const data = await response.json();
+        const frame = data.radar?.past?.at(-1);
+        if (active && frame) {
+          setRadarFrame({ host: data.host, path: frame.path, time: frame.time });
+          setRadarError("");
+        }
+      })
+      .catch((err) => active && setRadarError(String(err).replace(/^Error:\s*/, "")));
+    loadRadar();
+    const timer = window.setInterval(loadRadar, 5 * 60_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [page]);
+
   return (
     <section className={`widget-panel weather-panel ${compact ? "compact" : ""}`} onDoubleClick={onFocus}>
       <div className="weather-header">
         <span>Weather</span>
         <div className="weather-header-actions">
+          {!showSetup ? (
+            <div className="widget-page-control" aria-label="Weather page">
+              <button onClick={() => setPage("forecast")} disabled={page === "forecast"} title="Forecast page"><ChevronLeft size={15} /></button>
+              <span>{page === "forecast" ? "1 / 2" : "2 / 2"}</span>
+              <button onClick={() => setPage("radar")} disabled={page === "radar"} title="Radar page"><ChevronRight size={15} /></button>
+            </div>
+          ) : null}
           {showSetup && location ? (
             <button className="icon-button" title="Close weather settings" onClick={() => setSettingsOpen(false)}><X size={16} /></button>
           ) : location ? (
@@ -2360,6 +2575,23 @@ function WeatherPanel({
             <button onClick={onUseCurrentLocation}>Use Location</button>
             {location ? <button onClick={onChangeLocation}>Clear</button> : null}
           </div>
+        </div>
+      ) : page === "radar" ? (
+        <div className="weather-radar-page">
+          <InteractiveMap
+            center={radarCenter}
+            zoom={radarZoom}
+            monochrome={radarMonochrome}
+            onViewChange={(nextCenter, nextZoom) => { setRadarCenter(nextCenter); setRadarZoom(nextZoom); }}
+            radarTileUrl={radarFrame ? (z, x, y) => `${radarFrame.host}${radarFrame.path}/256/${z}/${x}/${y}/2/1_1.png` : undefined}
+            radarMaxZoom={7}
+            onMonochromeChange={setRadarMonochrome}
+          />
+          <div className="radar-caption">
+            <span>{radarFrame ? `Radar ${new Date(radarFrame.time * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Loading radar"}</span>
+            <a href="https://www.rainviewer.com/" target="_blank" rel="noreferrer">Weather data by RainViewer</a>
+          </div>
+          {radarError ? <div className="map-feed-error">{radarError}</div> : null}
         </div>
       ) : weather && activeDay ? (
         <>
@@ -2566,6 +2798,9 @@ function SetupOverlay({
   const [weatherDraftQuery, setWeatherDraftQuery] = useState("");
   const [weatherDraftSearching, setWeatherDraftSearching] = useState(false);
   const [weatherDraftError, setWeatherDraftError] = useState("");
+  const [adsbDraftQuery, setAdsbDraftQuery] = useState("");
+  const [adsbDraftSearching, setAdsbDraftSearching] = useState(false);
+  const [adsbDraftError, setAdsbDraftError] = useState("");
 
   useEffect(() => {
     setDraft({
@@ -2625,6 +2860,22 @@ function SetupOverlay({
     }
   }
 
+  async function setAdsbLocation(useCurrent = false) {
+    setAdsbDraftSearching(true);
+    setAdsbDraftError("");
+    try {
+      const location = useCurrent ? await onResolveCurrentWeatherLocation() : await onFindWeatherLocation(adsbDraftQuery);
+      if (location) {
+        setDraft({ ...draft, adsbLocation: location });
+        setAdsbDraftQuery("");
+      }
+    } catch (err) {
+      setAdsbDraftError(friendlyWeatherError(err));
+    } finally {
+      setAdsbDraftSearching(false);
+    }
+  }
+
   return (
     <div className="setup-backdrop">
       <section className="setup-panel">
@@ -2645,6 +2896,19 @@ function SetupOverlay({
               <Maximize2 size={16} />
               <span>Toggle Full Screen</span>
             </button>
+          </div>
+          <div className="scale-setting">
+            <label htmlFor="application-scale">Application scale <strong>{normalizeAppScale(draft.appScale)}%</strong></label>
+            <input
+              id="application-scale"
+              type="range"
+              min="0"
+              max={APP_SCALES.length - 1}
+              step="1"
+              value={APP_SCALES.indexOf(normalizeAppScale(draft.appScale))}
+              onChange={(event) => setDraft({ ...draft, appScale: APP_SCALES[Number(event.target.value)] })}
+            />
+            <div>{APP_SCALES.map((scale) => <button key={scale} className={normalizeAppScale(draft.appScale) === scale ? "selected" : ""} onClick={() => setDraft({ ...draft, appScale: scale })}>{scale}%</button>)}</div>
           </div>
         </section>
         <section className="settings-section calendar-settings-group">
@@ -2878,6 +3142,40 @@ function SetupOverlay({
             </div>
           </div>
           {weatherDraftError ? <p className="error-line">{weatherDraftError}</p> : null}
+        </section>
+
+        <section className="settings-section">
+          <div className="provider-panel">
+            <div>
+              <strong>Live Aircraft (ADS-B)</strong>
+              <span>{draft.adsbLocation ? "Location configured" : draft.weatherLocation ? "Using weather location" : "Location needed"}</span>
+              <small>ADSB.lol by default; ADSB Exchange-compatible endpoints can be configured below.</small>
+            </div>
+            {draft.adsbLocation ? <button onClick={() => setDraft({ ...draft, adsbLocation: undefined })}>Use Weather Location</button> : null}
+          </div>
+          <div className="setup-grid weather-settings-grid">
+            <label>
+              <span>Aircraft Map Location</span>
+              <input value={adsbDraftQuery} placeholder="City or suburb" onChange={(event) => setAdsbDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); setAdsbLocation(); } }} />
+            </label>
+            <div className="weather-settings-actions">
+              <button onClick={() => setAdsbLocation()}>{adsbDraftSearching ? "Searching" : "Search"}</button>
+              <button onClick={() => setAdsbLocation(true)}>Use Location</button>
+            </div>
+          </div>
+          <div className="setup-grid">
+            <label>
+              <span>API URL Template</span>
+              <input value={draft.adsbApiUrl || DEFAULT_ADSB_API_URL} onChange={(event) => setDraft({ ...draft, adsbApiUrl: event.target.value })} />
+              <small>Use &#123;lat&#125;, &#123;lon&#125; and &#123;radius&#125; placeholders.</small>
+            </label>
+            <label>
+              <span>API Key (optional)</span>
+              <input type="password" value={draft.adsbApiKey || ""} placeholder="RapidAPI / provider key" onChange={(event) => setDraft({ ...draft, adsbApiKey: event.target.value })} />
+            </label>
+          </div>
+          <label className="checkbox-setting"><input type="checkbox" checked={Boolean(draft.adsbGraphicOnly)} onChange={(event) => setDraft({ ...draft, adsbGraphicOnly: event.target.checked })} /> Aircraft graphics only by default</label>
+          {adsbDraftError ? <p className="error-line">{adsbDraftError}</p> : null}
         </section>
 
         <section className="settings-section">
@@ -3185,6 +3483,50 @@ function isSpotifyImage(value: unknown): value is SpotifyImage {
   );
 }
 
+function normalizeAircraft(value: unknown): Aircraft[] {
+  const root = objectValue(value);
+  const candidates = Array.isArray(root?.ac) ? root.ac : Array.isArray(root?.aircraft) ? root.aircraft : [];
+  return candidates.flatMap((entry): Aircraft[] => {
+    const item = objectValue(entry);
+    const latitude = numberValue(item?.lat ?? item?.latitude);
+    const longitude = numberValue(item?.lon ?? item?.longitude);
+    if (!item || latitude == null || longitude == null) return [];
+    return [{
+      id: stringValue(item.hex) || stringValue(item.icao) || `${latitude}-${longitude}`,
+      flight: stringValue(item.flight).trim() || stringValue(item.callsign).trim(),
+      registration: stringValue(item.r) || stringValue(item.registration),
+      aircraftType: stringValue(item.t) || stringValue(item.type),
+      latitude,
+      longitude,
+      altitude: numberValue(item.alt_baro ?? item.altitude),
+      speed: numberValue(item.gs ?? item.speed),
+      heading: numberValue(item.track ?? item.heading) || 0,
+      verticalRate: numberValue(item.baro_rate ?? item.vertical_rate),
+    }];
+  });
+}
+
+function numberValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && value !== "ground") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function formatAltitude(value: number | null) {
+  return value == null ? "—" : `${Math.round(value).toLocaleString()} ft`;
+}
+
+function formatSpeed(value: number | null) {
+  return value == null ? "—" : `${Math.round(value)} kt`;
+}
+
+function normalizeAppScale(value?: number): AppScale {
+  return APP_SCALES.includes(value as AppScale) ? value as AppScale : 100;
+}
+
 function normalizeSettings(settings: StoredSettings): StoredSettings {
   return {
     ...settings,
@@ -3207,6 +3549,11 @@ function normalizeSettings(settings: StoredSettings): StoredSettings {
     terminalWorkingDirectory: settings.terminalWorkingDirectory?.trim(),
     calendarId: settings.calendarId?.trim() || "primary",
     weatherLocation: settings.weatherLocation,
+    appScale: normalizeAppScale(settings.appScale),
+    adsbLocation: settings.adsbLocation,
+    adsbApiUrl: settings.adsbApiUrl?.trim() || DEFAULT_ADSB_API_URL,
+    adsbApiKey: settings.adsbApiKey?.trim(),
+    adsbGraphicOnly: Boolean(settings.adsbGraphicOnly),
     widgetLayout: normalizeWidgetLayout(settings.widgetLayout),
     selectedCalendarIds: Array.isArray(settings.selectedCalendarIds)
       ? settings.selectedCalendarIds.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim())
@@ -3236,17 +3583,18 @@ function normalizeWidgetLayout(layout?: WidgetLayout): WidgetLayout {
     return next;
   }, {});
   const normalizedVisible = layout ? visibleWithOrder : DEFAULT_WIDGET_LAYOUT.visible;
+  const stacks = packWidgetStacks(withMissing, normalizedVisible, layout?.stacks || DEFAULT_WIDGET_LAYOUT.stacks, sizes);
   return {
     mode,
     order: withMissing.slice(0, DEFAULT_WIDGET_LAYOUT.order.length),
     visible: normalizedVisible,
     thirdsStacked,
     sizes,
-    stacks: cleanWidgetStacks(layout?.stacks || DEFAULT_WIDGET_LAYOUT.stacks, normalizedVisible),
+    stacks,
   };
 }
 
-function buildDashboardEntries(layout: WidgetLayout): { widget: WidgetId; size: WidgetSize }[] {
+function buildDashboardEntries(layout: WidgetLayout): DashboardEntry[] {
   const visible = layout.order.filter((widget) => layout.visible.includes(widget));
   const stacks = cleanWidgetStacks(layout.stacks, visible);
   const stackedWidgets = new Set(stacks.flat());
@@ -3267,38 +3615,46 @@ function buildDashboardEntries(layout: WidgetLayout): { widget: WidgetId; size: 
     return [];
   }
   const requestedWide = (widget: WidgetId) => layout.sizes?.[widget] === "wide";
-  const singleEntry = (widget: WidgetId, size: WidgetSize) => ({ widget, size });
-  const stackedEntries = (group: WidgetId[]) => group.map((widget) => ({ widget, size: "half" as WidgetSize }));
-  const singleWidePair = (groupsToPack: WidgetId[][]) => {
-    const wideIndex = groupsToPack.findIndex((group) => group.length === 1 && requestedWide(group[0]));
-    const effectiveWideIndex = wideIndex === -1 ? 0 : wideIndex;
-    return groupsToPack.map((group, index) => singleEntry(group[0], index === effectiveWideIndex ? "wide" : "tall"));
-  };
+  const singleEntry = (widget: WidgetId, size: WidgetSize, column: number, row = 1): DashboardEntry => ({
+    widget,
+    size,
+    gridColumn: size === "full" ? "1 / -1" : size === "wide" ? `${column} / span 2` : String(column),
+    gridRow: size === "half" ? String(row) : "1 / span 2",
+  });
+  const stackedEntries = (group: WidgetId[], column: number) => (
+    group.map((widget, index) => singleEntry(widget, "half", column, index + 1))
+  );
 
   if (groups.length === 1 && groups[0].length === 1) {
-    return [singleEntry(groups[0][0], "full")];
+    return [singleEntry(groups[0][0], "full", 1)];
   }
   if (groups.length === 1 && groups[0].length === 2) {
     return [
-      singleEntry(groups[0][0], "wide"),
-      singleEntry(groups[0][1], "tall"),
+      singleEntry(groups[0][0], "wide", 1),
+      singleEntry(groups[0][1], "tall", 3),
     ];
   }
   if (groups.length === 2 && groups.every((group) => group.length === 1)) {
-    return singleWidePair(groups);
+    const requestedWideIndex = groups.findIndex((group) => requestedWide(group[0]));
+    const wideIndex = requestedWideIndex === -1 ? 0 : requestedWideIndex;
+    return groups.map((group, index) => (
+      index === wideIndex
+        ? singleEntry(group[0], "wide", index === 0 ? 1 : 2)
+        : singleEntry(group[0], "tall", index === 0 ? 1 : 3)
+    ));
   }
   if (groups.length === 2 && groups.some((group) => group.length === 2) && groups.some((group) => group.length === 1)) {
-    return groups.flatMap((group) => (
+    return groups.flatMap((group, index) => (
       group.length === 2
-        ? stackedEntries(group)
-        : [singleEntry(group[0], "wide")]
+        ? stackedEntries(group, index === 0 ? 1 : 3)
+        : [singleEntry(group[0], "wide", index === 0 ? 1 : 2)]
     ));
   }
 
-  return groups.flatMap((group) => (
+  return groups.flatMap((group, index) => (
     group.length === 2
-      ? stackedEntries(group)
-      : [singleEntry(group[0], requestedWide(group[0]) ? "wide" : "tall")]
+      ? stackedEntries(group, index + 1)
+      : [singleEntry(group[0], "tall", index + 1)]
   ));
 }
 
@@ -3430,8 +3786,37 @@ function cleanWidgetStacks(stacks: WidgetId[][] | undefined, visible: WidgetId[]
     });
 }
 
+function packWidgetStacks(
+  order: WidgetId[],
+  visible: WidgetId[],
+  stacks: WidgetId[][] | undefined,
+  sizes?: Partial<Record<WidgetId, WidgetSize>>,
+) {
+  const packed = cleanWidgetStacks(stacks, visible);
+  const visibleInOrder = order.filter((widget) => visible.includes(widget));
+
+  if (visibleInOrder.length === 3 && packed.length === 0) {
+    const wide = visibleInOrder.filter((widget) => sizes?.[widget] === "wide");
+    const neighbours = visibleInOrder.filter((widget) => widget !== wide[0]);
+    if (wide.length === 1 && neighbours.length === 2) {
+      packed.push(neighbours);
+    }
+  }
+
+  while (visibleInOrder.length - packed.length > 3) {
+    const stacked = new Set(packed.flat());
+    const singles = visibleInOrder.filter((widget) => !stacked.has(widget));
+    if (singles.length < 2) {
+      break;
+    }
+    packed.push(singles.slice(-2));
+  }
+
+  return packed;
+}
+
 function isWidgetId(value: unknown): value is WidgetId {
-  return value === "calendar" || value === "spotify" || value === "weather" || value === "codex" || value === "terminal";
+  return value === "calendar" || value === "spotify" || value === "weather" || value === "aircraft" || value === "codex" || value === "terminal";
 }
 
 function isWidgetSize(value: unknown): value is WidgetSize {
@@ -3447,6 +3832,9 @@ function widgetLabel(widget: WidgetId) {
   }
   if (widget === "weather") {
     return "Weather";
+  }
+  if (widget === "aircraft") {
+    return "Live Aircraft";
   }
   if (widget === "terminal") {
     return "Command Line";
@@ -3520,7 +3908,7 @@ function normalizeIcalCalendarUrl(value?: string) {
   }
 }
 
-function parseIcalendarFeed(text: string, feedUrl: string): { source: CalendarSource; events: CalendarEvent[] } {
+function parseIcalendarFeed(text: string, feedUrl: string, visibleDays: Date[] = []): { source: CalendarSource; events: CalendarEvent[] } {
   const lines = text
     .replace(/\r\n[ \t]/g, "")
     .replace(/\n[ \t]/g, "")
@@ -3539,34 +3927,11 @@ function parseIcalendarFeed(text: string, feedUrl: string): { source: CalendarSo
     readOnly: true,
     accessRole: "reader",
   };
-  const events: CalendarEvent[] = [];
-  let current: Record<string, IcalProperty> | null = null;
+  const components: Record<string, IcalProperty[]>[] = [];
+  let current: Record<string, IcalProperty[]> | null = null;
 
   const finishEvent = () => {
-    if (!current) {
-      return;
-    }
-    const start = current.DTSTART ? parseIcalDate(current.DTSTART) : null;
-    if (!start) {
-      current = null;
-      return;
-    }
-    const end = current.DTEND ? parseIcalDate(current.DTEND) || start : start;
-    const uid = current.UID?.value || `${dateKey(new Date())}-${events.length}`;
-    if (current.STATUS?.value.toUpperCase() !== "CANCELLED") {
-      events.push({
-        id: `ical:${uid}`,
-        summary: current.SUMMARY?.value || "Untitled",
-        description: current.DESCRIPTION?.value,
-        location: current.LOCATION?.value,
-        calendarId: source.id,
-        calendarSummary: source.summary,
-        calendarColor: source.backgroundColor,
-        start,
-        end,
-        htmlLink: current.URL?.value,
-      });
-    }
+    if (current) components.push(current);
     current = null;
   };
 
@@ -3583,11 +3948,85 @@ function parseIcalendarFeed(text: string, feedUrl: string): { source: CalendarSo
     if (current) {
       const property = parseIcalProperty(line);
       if (property) {
-        current[property.name] = property;
+        (current[property.name] ||= []).push(property);
       }
     }
   });
   finishEvent();
+  const firstVisible = visibleDays[0] || addDays(startOfDay(new Date()), -366);
+  const lastVisible = visibleDays[visibleDays.length - 1] || addDays(startOfDay(new Date()), 366);
+  const windowStart = addDays(startOfDay(firstVisible), -1);
+  const windowEnd = addDays(startOfDay(lastVisible), 2);
+  const firstProperty = (component: Record<string, IcalProperty[]>, name: string) => component[name]?.[0];
+  const uidOf = (component: Record<string, IcalProperty[]>, index = 0) => firstProperty(component, "UID")?.value || `${dateKey(new Date())}-${index}`;
+  const exceptionComponents = components.filter((component) => firstProperty(component, "RECURRENCE-ID"));
+  const exceptions = new Map<string, Record<string, IcalProperty[]>>();
+  exceptionComponents.forEach((component, index) => {
+    const recurrenceId = firstProperty(component, "RECURRENCE-ID");
+    const parsed = recurrenceId ? parseIcalDate(recurrenceId) : null;
+    if (parsed) exceptions.set(`${uidOf(component, index)}:${icalDateKey(parsed)}`, component);
+  });
+  const usedExceptions = new Set<Record<string, IcalProperty[]>>();
+  const events: CalendarEvent[] = [];
+
+  const addComponentEvent = (component: Record<string, IcalProperty[]>, start: CalendarEvent["start"], end: CalendarEvent["end"], id: string, fallback?: Record<string, IcalProperty[]>) => {
+    const property = (name: string) => firstProperty(component, name) || (fallback ? firstProperty(fallback, name) : undefined);
+    if (property("STATUS")?.value.toUpperCase() === "CANCELLED") return;
+    events.push({
+      id,
+      summary: property("SUMMARY")?.value || "Untitled",
+      description: property("DESCRIPTION")?.value,
+      location: property("LOCATION")?.value,
+      calendarId: source.id,
+      calendarSummary: source.summary,
+      calendarColor: source.backgroundColor,
+      start,
+      end,
+      htmlLink: property("URL")?.value,
+    });
+  };
+
+  components.filter((component) => !firstProperty(component, "RECURRENCE-ID")).forEach((component, index) => {
+    const startProperty = firstProperty(component, "DTSTART");
+    const start = startProperty ? parseIcalDate(startProperty) : null;
+    if (!start) return;
+    const endProperty = firstProperty(component, "DTEND");
+    const end = endProperty ? parseIcalDate(endProperty) || start : start;
+    const uid = uidOf(component, index);
+    const exdates = (component.EXDATE || []).flatMap((property) => property.value.split(",").map((value) => parseIcalDate({ ...property, value })).filter((value): value is CalendarEvent["start"] => Boolean(value)));
+    const occurrences = expandIcalRecurrence({
+      start,
+      end,
+      rrule: firstProperty(component, "RRULE")?.value,
+      exdates,
+      windowStart,
+      windowEnd,
+    });
+    occurrences.forEach((occurrence) => {
+      const exception = exceptions.get(`${uid}:${occurrence.key}`);
+      if (exception) {
+        usedExceptions.add(exception);
+        const exceptionStartProperty = firstProperty(exception, "DTSTART");
+        const exceptionStart = exceptionStartProperty ? parseIcalDate(exceptionStartProperty) : occurrence.start;
+        const exceptionEndProperty = firstProperty(exception, "DTEND");
+        const exceptionEnd = exceptionEndProperty ? parseIcalDate(exceptionEndProperty) || occurrence.end : occurrence.end;
+        if (exceptionStart && exceptionEnd) addComponentEvent(exception, exceptionStart, exceptionEnd, `ical:${uid}:${occurrence.key}`, component);
+        return;
+      }
+      addComponentEvent(component, occurrence.start, occurrence.end, `ical:${uid}:${occurrence.key}`);
+    });
+  });
+
+  exceptionComponents.filter((component) => !usedExceptions.has(component)).forEach((component, index) => {
+    const startProperty = firstProperty(component, "DTSTART");
+    const start = startProperty ? parseIcalDate(startProperty) : null;
+    const endProperty = firstProperty(component, "DTEND");
+    const end = endProperty ? parseIcalDate(endProperty) : start;
+    if (!start || !end) return;
+    const startDate = new Date(start.dateTime || `${start.date}T00:00:00`);
+    const endDate = new Date(end.dateTime || `${end.date}T00:00:00`);
+    if (startDate < windowEnd && endDate >= windowStart) addComponentEvent(component, start, end, `ical:${uidOf(component, index)}:${icalDateKey(start)}`);
+  });
   return { source, events };
 }
 
@@ -4048,6 +4487,13 @@ function formatHour(hour: number) {
 }
 
 function mockCalendarEvents(): CalendarEvent[] {
+  const monday = addDays(startOfWeek(new Date()), 1);
+  const timed = (dayOffset: number, hour: number, minute = 0) => {
+    const date = addDays(monday, dayOffset);
+    date.setHours(hour, minute, 0, 0);
+    return date.toISOString();
+  };
+  const day = (dayOffset: number) => dateKey(addDays(monday, dayOffset));
   return [
     {
       id: "mock:project-sync",
@@ -4056,8 +4502,8 @@ function mockCalendarEvents(): CalendarEvent[] {
       calendarSummary: "Primary",
       calendarColor: "#d064e8",
       calendarId: "primary",
-      start: { dateTime: "2026-07-06T09:00:00+10:00" },
-      end: { dateTime: "2026-07-06T09:30:00+10:00" },
+      start: { dateTime: timed(0, 9) },
+      end: { dateTime: timed(0, 9, 30) },
     },
     {
       id: "mock:timezone-standup",
@@ -4066,27 +4512,21 @@ function mockCalendarEvents(): CalendarEvent[] {
       calendarSummary: "Primary",
       calendarColor: "#d064e8",
       calendarId: "primary",
-      start: { dateTime: "2026-07-05T23:30:00Z" },
-      end: { dateTime: "2026-07-06T00:00:00Z" },
+      start: { dateTime: timed(0, 9, 30) },
+      end: { dateTime: timed(0, 10) },
       organizer: { displayName: "Ops Lead" },
       attendees: [{ displayName: "Alex" }, { displayName: "Sam" }],
       description: "This meeting is stored as Sunday UTC but should appear on Monday in the selected calendar timezone.",
     },
-    ...[
-      ["06", "Monday"],
-      ["07", "Tuesday"],
-      ["08", "Wednesday"],
-      ["09", "Thursday"],
-      ["10", "Friday"],
-    ].map(([day, label]) => ({
+    ...["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map((label, dayOffset) => ({
       id: `mock:weekday-${label.toLowerCase()}`,
       summary: label,
       location: "HW desks",
       calendarSummary: "Primary",
       calendarColor: "#d064e8",
       calendarId: "primary",
-      start: { dateTime: `2026-07-${day}T09:30:00+10:00` },
-      end: { dateTime: `2026-07-${day}T10:00:00+10:00` },
+      start: { dateTime: timed(dayOffset, 10, 30) },
+      end: { dateTime: timed(dayOffset, 11) },
     })),
     {
       id: "mock:design-review",
@@ -4095,8 +4535,8 @@ function mockCalendarEvents(): CalendarEvent[] {
       calendarSummary: "Work",
       calendarColor: "#e8c957",
       calendarId: "work",
-      start: { dateTime: "2026-07-07T13:00:00+10:00" },
-      end: { dateTime: "2026-07-07T14:00:00+10:00" },
+      start: { dateTime: timed(1, 13) },
+      end: { dateTime: timed(1, 14) },
     },
     {
       id: "mock:team-planning",
@@ -4105,8 +4545,8 @@ function mockCalendarEvents(): CalendarEvent[] {
       calendarSummary: "Team Shared",
       calendarColor: "#45d48a",
       calendarId: "team",
-      start: { dateTime: "2026-07-07T15:00:00+10:00" },
-      end: { dateTime: "2026-07-07T16:30:00+10:00" },
+      start: { dateTime: timed(1, 15) },
+      end: { dateTime: timed(1, 16, 30) },
     },
     {
       id: "mock:launch-window",
@@ -4114,8 +4554,8 @@ function mockCalendarEvents(): CalendarEvent[] {
       calendarSummary: "Primary",
       calendarColor: "#45d48a",
       calendarId: "primary",
-      start: { date: "2026-07-06" },
-      end: { date: "2026-07-07" },
+      start: { date: day(0) },
+      end: { date: day(1) },
     },
     {
       id: "mock:on-call",
@@ -4123,8 +4563,8 @@ function mockCalendarEvents(): CalendarEvent[] {
       calendarSummary: "Work",
       calendarColor: "#e8c957",
       calendarId: "work",
-      start: { date: "2026-07-06" },
-      end: { date: "2026-07-07" },
+      start: { date: day(0) },
+      end: { date: day(1) },
     },
     {
       id: "mock:office-day",
@@ -4132,8 +4572,8 @@ function mockCalendarEvents(): CalendarEvent[] {
       calendarSummary: "Team Shared",
       calendarColor: "#45d48a",
       calendarId: "team",
-      start: { date: "2026-07-06" },
-      end: { date: "2026-07-07" },
+      start: { date: day(0) },
+      end: { date: day(1) },
     },
   ];
 }
@@ -4231,6 +4671,14 @@ function mockWeatherLocation(): WeatherLocation {
     latitude: -37.8136,
     longitude: 144.9631,
   };
+}
+
+function mockAircraft(location: WeatherLocation): Aircraft[] {
+  return [
+    { id: "mock:vh-vyi", flight: "QFA432", registration: "VH-VYI", aircraftType: "B738", latitude: location.latitude + 0.16, longitude: location.longitude - 0.12, altitude: 18_450, speed: 342, heading: 72, verticalRate: 1_280 },
+    { id: "mock:vh-ueb", flight: "VOZ841", registration: "VH-UEB", aircraftType: "B38M", latitude: location.latitude - 0.09, longitude: location.longitude + 0.21, altitude: 8_900, speed: 251, heading: 318, verticalRate: -640 },
+    { id: "mock:vh-ykq", flight: "JST512", registration: "VH-YKQ", aircraftType: "A320", latitude: location.latitude + 0.03, longitude: location.longitude + 0.05, altitude: 3_200, speed: 168, heading: 195, verticalRate: -920 },
+  ];
 }
 
 function weatherAlertText(precipMm: number, uvIndex: number, probability: number) {
