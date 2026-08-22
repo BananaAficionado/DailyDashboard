@@ -30,8 +30,10 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { CSSProperties, DragEvent, FormEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { InteractiveMap, type MapPoint } from "./InteractiveMap";
+import { InteractiveMap, type MapPoint, type MapTrail, type MapTrailPoint } from "./InteractiveMap";
 import { expandIcalRecurrence, icalDateKey } from "./icalRecurrence";
+import { adsbAltitudeColor } from "./mapTiles";
+import { IdleDashboard, type IdleBackgroundKind } from "./IdleBackgrounds";
 
 type ViewMode = "week" | "day";
 type CalendarStyle = "google" | "outlook";
@@ -67,10 +69,17 @@ type StoredSettings = EnvConfig & {
   adsbApiUrl?: string;
   adsbApiKey?: string;
   adsbGraphicOnly?: boolean;
+  idleBackground?: IdleBackgroundKind;
+  idleMapLocation?: WeatherLocation;
+  idleSlideshowFolder?: string;
+  updatePreference?: UpdatePreference;
 };
 
 type WidgetId = "calendar" | "spotify" | "weather" | "aircraft" | "codex" | "terminal";
 type AppScale = 75 | 100 | 125 | 150 | 200;
+type UpdatePreference = "notify" | "auto-download" | "auto-install" | "ignore";
+type AvailableUpdate = { version: string; name: string; notes: string; releaseUrl: string; assetName?: string; assetUrl?: string; assetDigest?: string; prerelease: boolean };
+type DownloadedUpdate = { path: string; assetName: string };
 type WidgetLayoutMode = "thirds" | "focus";
 type WidgetSize = "full" | "wide" | "tall" | "half";
 type DashboardEntry = {
@@ -188,6 +197,7 @@ type WeatherData = {
   precipTotal: number;
   precipProbability: number;
   hourlyPrecip: { time: string; value: number }[];
+  rainHistory: { time: string; value: number }[];
   days: WeatherDay[];
   alert: string;
 };
@@ -212,6 +222,7 @@ type Aircraft = {
   latitude: number;
   longitude: number;
   altitude: number | null;
+  onGround: boolean;
   speed: number | null;
   heading: number;
   verticalRate: number | null;
@@ -266,6 +277,18 @@ const APP_SCALES: AppScale[] = [75, 100, 125, 150, 200];
 const APP_VERSION = "V0.4";
 const RAIL_HIDE_DELAY_MS = 3_000;
 const EMPTY_DASHBOARD_IDLE_DELAY_MS = 15_000;
+const featureFlag = (value: unknown, defaultEnabled = true) => {
+  if (value == null || value === "") return defaultEnabled;
+  return String(value).toLowerCase() !== "false" && String(value) !== "0";
+};
+const WIDGET_FEATURE_FLAGS: Record<WidgetId, boolean> = {
+  calendar: featureFlag(import.meta.env.VITE_FEATURE_WIDGET_CALENDAR),
+  spotify: featureFlag(import.meta.env.VITE_FEATURE_WIDGET_SPOTIFY),
+  weather: featureFlag(import.meta.env.VITE_FEATURE_WIDGET_WEATHER),
+  aircraft: featureFlag(import.meta.env.VITE_FEATURE_WIDGET_AIRCRAFT),
+  codex: featureFlag(import.meta.env.VITE_FEATURE_WIDGET_CODEX, false),
+  terminal: featureFlag(import.meta.env.VITE_FEATURE_WIDGET_TERMINAL),
+};
 const DEFAULT_WIDGET_SIZES: Record<WidgetId, WidgetSize> = {
   calendar: "wide",
   spotify: "half",
@@ -337,6 +360,11 @@ function App() {
   const [toastVisible, setToastVisible] = useState(false);
   const [railPeekOpen, setRailPeekOpen] = useState(false);
   const [emptyDashboardContentVisible, setEmptyDashboardContentVisible] = useState(true);
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
+  const [downloadedUpdate, setDownloadedUpdate] = useState<DownloadedUpdate | null>(null);
+  const [updateStatus, setUpdateStatus] = useState("");
+  const [updateBusy, setUpdateBusy] = useState(false);
   const railHideTimer = useRef<number | null>(null);
   const emptyDashboardIdleTimer = useRef<number | null>(null);
 
@@ -376,6 +404,8 @@ function App() {
   const calendarStyle = normalizeCalendarStyle(settings.calendarStyle);
   const appScale = normalizeAppScale(settings.appScale);
   const railWidgetActive = (widget: WidgetId) => visibleWidgetSet.has(widget);
+  const calendarNarrow = widgetSize("calendar") === "tall" || widgetSize("calendar") === "half";
+  const calendarTimeColumnWidth = calendarNarrow ? 48 : 72;
 
   function clearRailHideTimer() {
     if (railHideTimer.current !== null) {
@@ -437,6 +467,10 @@ function App() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (calendarNarrow) setCalendarSourcePanelOpen(false);
+  }, [calendarNarrow]);
+
   useEffect(() => () => clearRailHideTimer(), []);
 
   useEffect(() => {
@@ -474,7 +508,20 @@ function App() {
             googleClientId: "mock-google.apps.googleusercontent.com",
             spotifyClientId: "mock-spotify",
           });
-          setSettings({ calendarId: "primary", weatherLocation: mockWeatherLocation() });
+          const mockCalendarTall = new URLSearchParams(window.location.search).has("calendarTall");
+          const mockParams = new URLSearchParams(window.location.search);
+          const mockScale = normalizeAppScale(Number(mockParams.get("scale")));
+          const mockEmpty = mockParams.has("empty");
+          setSettings({
+            calendarId: "primary",
+            appScale: mockScale,
+            weatherLocation: mockWeatherLocation(),
+            widgetLayout: mockEmpty ? { ...DEFAULT_WIDGET_LAYOUT, visible: [], stacks: [] } : mockCalendarTall ? {
+              ...DEFAULT_WIDGET_LAYOUT,
+              sizes: { ...DEFAULT_WIDGET_SIZES, calendar: "tall", spotify: "tall", weather: "tall" },
+              stacks: [],
+            } : undefined,
+          });
           setEvents(mockCalendarEvents());
           setCalendarSources(mockCalendarSources());
           setPlayback(mockPlayback());
@@ -488,10 +535,18 @@ function App() {
         }
       } catch (err) {
         setError(String(err));
+      } finally {
+        setConfigLoaded(true);
       }
     }
     boot();
   }, []);
+
+  useEffect(() => {
+    if (!configLoaded || !isTauri() || normalizeUpdatePreference(settings.updatePreference) === "ignore") return;
+    const timer = window.setTimeout(() => checkForUpdates(false).catch((err) => setUpdateStatus(String(err))), 1800);
+    return () => window.clearTimeout(timer);
+  }, [configLoaded]);
 
   useEffect(() => {
     if (!error) {
@@ -878,7 +933,7 @@ function App() {
 
   useEffect(() => {
     loadAircraft();
-    const timer = window.setInterval(loadAircraft, 10_000);
+    const timer = window.setInterval(loadAircraft, isMockMode() ? 750 : 10_000);
     return () => window.clearInterval(timer);
   }, [loadAircraft]);
 
@@ -947,6 +1002,58 @@ function App() {
     setSettings(normalized);
     if (isTauri()) {
       await invoke("save_settings", { settings: normalized });
+    }
+  }
+
+  async function checkForUpdates(manual = true) {
+    if (!isTauri()) {
+      setUpdateStatus("Update checks are available in the installed app.");
+      return;
+    }
+    if (!manual && normalizeUpdatePreference(settings.updatePreference) === "ignore") return;
+    setUpdateBusy(true);
+    setUpdateStatus("Checking GitHub releases…");
+    try {
+      const update = await invoke<AvailableUpdate | null>("check_for_updates", { currentVersion: APP_VERSION });
+      setAvailableUpdate(update);
+      if (!update) {
+        setUpdateStatus(`${APP_VERSION} is up to date.`);
+        return;
+      }
+      setUpdateStatus(`${update.version} is available.`);
+      const preference = normalizeUpdatePreference(settings.updatePreference);
+      if (!manual && (preference === "auto-download" || preference === "auto-install")) {
+        const downloaded = await downloadAvailableUpdate(update);
+        if (preference === "auto-install") await installDownloadedUpdate(downloaded, false);
+      }
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function downloadAvailableUpdate(update = availableUpdate) {
+    if (!update?.assetUrl || !update.assetName) throw new Error("This release does not include an installer for this operating system.");
+    setUpdateBusy(true);
+    setUpdateStatus(`Downloading ${update.version}…`);
+    try {
+      const downloaded = await invoke<DownloadedUpdate>("download_update", { assetUrl: update.assetUrl, assetName: update.assetName, assetDigest: update.assetDigest });
+      setDownloadedUpdate(downloaded);
+      setUpdateStatus(`${update.version} is downloaded and verified.`);
+      return downloaded;
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function installDownloadedUpdate(downloaded = downloadedUpdate, installOnReboot = false) {
+    if (!downloaded) throw new Error("Download the update before installing it.");
+    setUpdateBusy(true);
+    setUpdateStatus(installOnReboot ? "Scheduling update for the next Windows sign-in…" : "Starting the update installer…");
+    try {
+      await invoke("install_update", { path: downloaded.path, installOnReboot });
+      if (installOnReboot) setUpdateStatus("Update scheduled for the next Windows sign-in.");
+    } finally {
+      setUpdateBusy(false);
     }
   }
 
@@ -1465,6 +1572,7 @@ function App() {
     url.searchParams.set("daily", "temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_sum,precipitation_probability_max,sunrise,sunset");
     url.searchParams.set("timezone", "auto");
     url.searchParams.set("forecast_days", "5");
+    url.searchParams.set("past_hours", "24");
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Weather request failed: ${response.status}`);
@@ -1480,6 +1588,11 @@ function App() {
       precipProbability: 0,
       hourly: [],
     };
+    const currentWeatherTime = String(data.current?.time || "");
+    const rainHistory = (data.hourly?.time || [])
+      .map((time: string, index: number) => ({ time, value: Number(data.hourly?.precipitation?.[index] ?? 0) }))
+      .filter((item: { time: string }) => !currentWeatherTime || item.time <= currentWeatherTime)
+      .slice(-24);
     setWeather({
       currentTemp: Math.round(data.current?.temperature_2m ?? 0),
       feelsLikeTemp: Math.round(data.current?.apparent_temperature ?? data.current?.temperature_2m ?? 0),
@@ -1489,6 +1602,7 @@ function App() {
       precipTotal: today.precipTotal,
       precipProbability: today.precipProbability,
       hourlyPrecip: today.hourly.map((hour) => ({ time: hour.time, value: hour.precip })),
+      rainHistory,
       days,
       alert: weatherAlertText(
         today.precipTotal,
@@ -1630,7 +1744,7 @@ function App() {
 
   return (
     <main
-      className={`app-shell ${railPeekOpen ? "rail-peek-open" : "rail-peek-closed"} ${rearrangeMode ? "rearrange-mode" : ""} ${draggedWidget ? "dragging-widget" : ""}`}
+      className={`app-shell app-scale-${appScale} ${railPeekOpen ? "rail-peek-open" : "rail-peek-closed"} ${rearrangeMode ? "rearrange-mode" : ""} ${draggedWidget ? "dragging-widget" : ""}`}
       style={{ "--app-scale": appScale / 100 } as CSSProperties}
     >
       <aside
@@ -1645,24 +1759,24 @@ function App() {
         }}
         onKeyDown={showRail}
       >
-        <button className={`rail-button ${railWidgetActive("calendar") ? "active" : ""}`} title="Calendar" onClick={() => toggleWidget("calendar")}>
+        {WIDGET_FEATURE_FLAGS.calendar ? <button className={`rail-button ${railWidgetActive("calendar") ? "active" : ""}`} title="Calendar" onClick={() => toggleWidget("calendar")}>
           <CalendarDays size={20} />
-        </button>
-        <button className={`rail-button ${railWidgetActive("spotify") ? "active" : ""}`} title="Spotify" onClick={() => toggleWidget("spotify")}>
+        </button> : null}
+        {WIDGET_FEATURE_FLAGS.spotify ? <button className={`rail-button ${railWidgetActive("spotify") ? "active" : ""}`} title="Spotify" onClick={() => toggleWidget("spotify")}>
           <ListMusic size={20} />
-        </button>
-        <button className={`rail-button ${railWidgetActive("weather") ? "active" : ""}`} title="Weather" onClick={() => toggleWidget("weather")}>
+        </button> : null}
+        {WIDGET_FEATURE_FLAGS.weather ? <button className={`rail-button ${railWidgetActive("weather") ? "active" : ""}`} title="Weather" onClick={() => toggleWidget("weather")}>
           <CloudSun size={20} />
-        </button>
-        <button className={`rail-button ${railWidgetActive("aircraft") ? "active" : ""}`} title="Live aircraft" onClick={() => toggleWidget("aircraft")}>
+        </button> : null}
+        {WIDGET_FEATURE_FLAGS.aircraft ? <button className={`rail-button ${railWidgetActive("aircraft") ? "active" : ""}`} title="Live aircraft" onClick={() => toggleWidget("aircraft")}>
           <Plane size={20} />
-        </button>
-        <button className={`rail-button ${railWidgetActive("codex") ? "active" : ""}`} title="Codex" onClick={() => toggleWidget("codex")}>
+        </button> : null}
+        {WIDGET_FEATURE_FLAGS.codex ? <button className={`rail-button ${railWidgetActive("codex") ? "active" : ""}`} title="Codex" onClick={() => toggleWidget("codex")}>
           <Bot size={20} />
-        </button>
-        <button className={`rail-button ${railWidgetActive("terminal") ? "active" : ""}`} title="Terminal" onClick={() => toggleWidget("terminal")}>
+        </button> : null}
+        {WIDGET_FEATURE_FLAGS.terminal ? <button className={`rail-button ${railWidgetActive("terminal") ? "active" : ""}`} title="Terminal" onClick={() => toggleWidget("terminal")}>
           <Terminal size={20} />
-        </button>
+        </button> : null}
         <button className={`rail-button rail-arrange ${rearrangeMode ? "active" : ""}`} title="Arrange widgets" onClick={() => setRearrangeMode((mode) => !mode)}>
           <LayoutGrid size={19} />
         </button>
@@ -1672,7 +1786,7 @@ function App() {
       </aside>
 
       <section
-        className={`dashboard-grid widget-count-${dashboardWidgets.length} ${dragPreview?.type === "grid" ? `grid-preview-${dragPreview.mode}` : ""}`}
+        className={`dashboard-grid widget-count-${dashboardWidgets.length} ${dashboardWidgets.length ? "" : "empty-dashboard-grid"} ${dragPreview?.type === "grid" ? `grid-preview-${dragPreview.mode}` : ""}`}
         onDragOver={(event) => {
           if (!rearrangeMode || !draggedWidget) {
             return;
@@ -1719,30 +1833,13 @@ function App() {
             ) : null}
           </div>
         ) : null}
-        {!dashboardWidgets.length ? (
-          <div className="empty-dashboard">
-            <div className="empty-wave-field" aria-hidden="true">
-              <svg className="empty-wave-svg" viewBox="0 0 1600 520" preserveAspectRatio="none" focusable="false">
-                <path className="empty-wave-line wave-one" pathLength="1" d="M -120 280 C 160 120 340 390 620 238 S 1040 116 1320 286 S 1710 346 1840 194" />
-                <path className="empty-wave-line wave-two" pathLength="1" d="M -160 350 C 120 190 376 428 650 304 S 1010 206 1286 334 S 1700 424 1860 276" />
-                <path className="empty-wave-line wave-three" pathLength="1" d="M -180 210 C 110 74 350 300 590 182 S 970 86 1230 218 S 1630 298 1830 138" />
-                <path className="empty-wave-line wave-four" pathLength="1" d="M -130 426 C 180 296 390 494 650 400 S 1040 300 1310 430 S 1660 494 1840 376" />
-                <path className="empty-wave-line wave-five" pathLength="1" d="M -180 142 C 120 30 380 210 610 116 S 1000 22 1270 152 S 1660 216 1830 88" />
-                <path className="empty-wave-line wave-six" pathLength="1" d="M -150 78 C 130 -20 360 150 620 72 S 1010 -6 1278 96 S 1620 172 1840 42" />
-                <path className="empty-wave-line wave-seven" pathLength="1" d="M -170 482 C 100 368 380 552 642 468 S 1018 382 1288 496 S 1668 558 1852 438" />
-                <path className="empty-wave-line wave-eight" pathLength="1" d="M -160 316 C 146 218 346 414 606 328 S 984 236 1254 346 S 1612 420 1848 296" />
-                <path className="empty-wave-line wave-nine" pathLength="1" d="M -140 246 C 106 164 328 330 584 254 S 968 168 1218 266 S 1638 360 1842 230" />
-              </svg>
-            </div>
-            <div className={`empty-dashboard-content ${emptyDashboardContentVisible ? "" : "is-hidden"}`}>
-              <span className="empty-dashboard-icon">
-                <LayoutGrid size={34} />
-              </span>
-              <strong>No widgets open</strong>
-              <span>Use the left rail to show Calendar, Spotify, Weather, Codex, or Command Line.</span>
-            </div>
-          </div>
-        ) : null}
+        {!dashboardWidgets.length ? <IdleDashboard
+          kind={normalizeIdleBackground(settings.idleBackground)}
+          location={settings.idleMapLocation || settings.weatherLocation}
+          slideshowFolder={settings.idleSlideshowFolder}
+          contentVisible={emptyDashboardContentVisible}
+          onKindChange={(idleBackground) => saveSettings({ ...settings, idleBackground }).catch((err) => setError(String(err)))}
+        /> : null}
         {dashboardEntries.map(({ widget, gridColumn, gridRow }) => (
           <div
             key={widget}
@@ -1838,7 +1935,7 @@ function App() {
                     </span>
                   </div>
                   <div className="topbar-spacer" />
-                  <button className={`icon-button ${isRefreshing ? "spinning" : ""}`} title="Refresh" onClick={refreshDashboard}>
+                  <button className={`icon-button calendar-refresh-button ${isRefreshing ? "spinning" : ""}`} title="Refresh" onClick={refreshDashboard}>
                     <RefreshCcw size={18} />
                   </button>
                   <button className={`icon-button ${searchOpen ? "active" : ""}`} title="Search" onClick={() => setSearchOpen((open) => !open)}>
@@ -1886,7 +1983,7 @@ function App() {
                     ) : null}
                   </aside>
                   <div className="calendar-scroll">
-                    <div className="day-header" style={{ gridTemplateColumns: `72px repeat(${visibleDays.length}, 1fr)` }}>
+                    <div className="day-header" style={{ gridTemplateColumns: `${calendarTimeColumnWidth}px repeat(${visibleDays.length}, 1fr)` }}>
                       <div className="timezone">{shortTimeZone(credentials.googleCalendarTimeZone)}</div>
                       {visibleDays.map((day) => (
                         <div className="day-heading" key={day.toISOString()}>
@@ -1896,7 +1993,7 @@ function App() {
                       ))}
                     </div>
 
-                    <div className="all-day-row" style={{ gridTemplateColumns: `72px repeat(${visibleDays.length}, 1fr)` }}>
+                    <div className="all-day-row" style={{ gridTemplateColumns: `${calendarTimeColumnWidth}px repeat(${visibleDays.length}, 1fr)` }}>
                       <div />
                       {visibleDays.map((day) => {
                         const dayEvents = allDayEvents.filter((event) => eventOverlapsDay(event, day, credentials.googleCalendarTimeZone));
@@ -1922,7 +2019,7 @@ function App() {
                     <div
                       className="time-grid"
                       style={{
-                        gridTemplateColumns: `72px repeat(${visibleDays.length}, 1fr)`,
+                        gridTemplateColumns: `${calendarTimeColumnWidth}px repeat(${visibleDays.length}, 1fr)`,
                         minHeight: hourLabels.length * 48,
                         height: hourLabels.length * 48,
                       }}
@@ -2055,6 +2152,13 @@ function App() {
           widgetLayout={widgetLayout}
           onOpenCodex={() => openCodexWindow().catch((err) => setError(String(err)))}
           onToggleFullscreen={() => toggleFullscreen().catch((err) => setError(String(err)))}
+          availableUpdate={availableUpdate}
+          downloadedUpdate={downloadedUpdate}
+          updateStatus={updateStatus}
+          updateBusy={updateBusy}
+          onCheckForUpdates={() => checkForUpdates(true)}
+          onDownloadUpdate={() => downloadAvailableUpdate()}
+          onInstallUpdate={(installOnReboot) => installDownloadedUpdate(undefined, installOnReboot)}
         />
       ) : null}
       {upcomingReminder ? (
@@ -2401,20 +2505,42 @@ function AircraftPanel({
   const [zoom, setZoom] = useState(7);
   const [monochrome, setMonochrome] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [historyByAircraft, setHistoryByAircraft] = useState<Record<string, Array<MapTrailPoint & { capturedAt: number }>>>({});
   const selected = aircraft.find((item) => item.id === selectedId) || null;
 
   useEffect(() => {
     if (location) setCenter({ latitude: location.latitude, longitude: location.longitude });
   }, [location?.latitude, location?.longitude]);
 
+  useEffect(() => {
+    const capturedAt = Date.now();
+    setHistoryByAircraft((current) => {
+      const next = { ...current };
+      for (const item of aircraft) {
+        const recent = (current[item.id] || []).filter((point) => capturedAt - point.capturedAt <= 60 * 60_000);
+        const last = recent[recent.length - 1];
+        if (!last || last.latitude !== item.latitude || last.longitude !== item.longitude || last.altitude !== item.altitude || last.onGround !== item.onGround) {
+          recent.push({ latitude: item.latitude, longitude: item.longitude, altitude: item.altitude, onGround: item.onGround, capturedAt });
+        }
+        next[item.id] = recent.slice(-360);
+      }
+      return next;
+    });
+  }, [aircraft]);
+
   const points: MapPoint[] = aircraft.map((item) => ({
     id: item.id,
     latitude: item.latitude,
     longitude: item.longitude,
     heading: item.heading,
+    altitude: item.altitude,
+    onGround: item.onGround,
     label: graphicOnly ? undefined : item.flight || item.registration,
     title: `${item.flight || "Aircraft"} · ${formatAltitude(item.altitude)} · ${formatSpeed(item.speed)}`,
   }));
+  const trails: MapTrail[] = selectedId && historyByAircraft[selectedId]?.length > 1
+    ? [{ id: selectedId, points: historyByAircraft[selectedId] }]
+    : [];
 
   return (
     <section className={`widget-panel aircraft-panel ${compact ? "compact" : ""}`} onDoubleClick={onFocus}>
@@ -2430,6 +2556,7 @@ function AircraftPanel({
           center={center}
           zoom={zoom}
           points={points}
+          trails={trails}
           selectedPointId={selectedId}
           monochrome={monochrome}
           onViewChange={(nextCenter, nextZoom) => { setCenter(nextCenter); setZoom(nextZoom); }}
@@ -2450,7 +2577,7 @@ function AircraftPanel({
             <div><strong>{selected.flight || selected.registration || selected.id}</strong><span>{selected.aircraftType || "Unknown type"}</span></div>
             <dl>
               <div><dt>Registration</dt><dd>{selected.registration || "—"}</dd></div>
-              <div><dt>Altitude</dt><dd>{formatAltitude(selected.altitude)}</dd></div>
+              <div><dt>Altitude</dt><dd className="aircraft-altitude-value" style={{ color: adsbAltitudeColor(selected.altitude, selected.onGround) }}>{formatAltitude(selected.altitude)}</dd></div>
               <div><dt>Speed</dt><dd>{formatSpeed(selected.speed)}</dd></div>
               <div><dt>Vertical</dt><dd>{selected.verticalRate == null ? "—" : `${Math.round(selected.verticalRate)} ft/min`}</dd></div>
             </dl>
@@ -2491,12 +2618,15 @@ function WeatherPanel({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [forecastMode, setForecastMode] = useState<"day" | "five">("day");
   const [forecastDayIndex, setForecastDayIndex] = useState(0);
+  const [rainHistoryPeriod, setRainHistoryPeriod] = useState<null | "1h" | "24h">(null);
   const [page, setPage] = useState<"forecast" | "radar">("forecast");
-  const [radarFrame, setRadarFrame] = useState<{ host: string; path: string; time: number } | null>(null);
+  const [radarFrames, setRadarFrames] = useState<Array<{ host: string; path: string; time: number; forecast: boolean }>>([]);
+  const [radarFrameIndex, setRadarFrameIndex] = useState(0);
   const [radarError, setRadarError] = useState("");
   const [radarCenter, setRadarCenter] = useState(() => ({ latitude: location?.latitude || -37.8136, longitude: location?.longitude || 144.9631 }));
   const [radarZoom, setRadarZoom] = useState(7);
   const [radarMonochrome, setRadarMonochrome] = useState(true);
+  const radarFrame = radarFrames[radarFrameIndex] || null;
   const showSetup = !location || settingsOpen;
   const forecastDays = weather?.days?.length ? weather.days : weather ? [{
     date: new Date().toISOString(),
@@ -2508,6 +2638,13 @@ function WeatherPanel({
     hourly: weather.hourlyPrecip.map((hour) => ({ time: hour.time, temp: weather.currentTemp, feelsLike: weather.feelsLikeTemp, precip: hour.value })),
   }] : [];
   const activeDay = forecastDays[Math.min(forecastDayIndex, Math.max(0, forecastDays.length - 1))];
+  const visibleRainHistory = weather?.rainHistory?.slice(rainHistoryPeriod === "1h" ? -1 : -24) || [];
+  const rainHistoryTotal = visibleRainHistory.reduce((total, item) => total + item.value, 0);
+
+  function cycleRainHistory() {
+    setPage("forecast");
+    setRainHistoryPeriod((current) => current === null ? "1h" : current === "1h" ? "24h" : null);
+  }
 
   useEffect(() => {
     setForecastDayIndex((index) => Math.min(index, Math.max(0, forecastDays.length - 1)));
@@ -2524,10 +2661,17 @@ function WeatherPanel({
       .then(async (response) => {
         if (!response.ok) throw new Error(`Radar request failed: ${response.status}`);
         const data = await response.json();
-        const frame = data.radar?.past?.at(-1);
-        if (active && frame) {
-          setRadarFrame({ host: data.host, path: frame.path, time: frame.time });
+        const observed = Array.isArray(data.radar?.past) ? data.radar.past.slice(-3) : [];
+        const forecast = Array.isArray(data.radar?.nowcast) ? data.radar.nowcast : [];
+        const frames = [...observed.map((frame: { path: string; time: number }) => ({ ...frame, forecast: false })), ...forecast.map((frame: { path: string; time: number }) => ({ ...frame, forecast: true }))]
+          .filter((frame) => typeof frame.path === "string" && Number.isFinite(frame.time))
+          .map((frame) => ({ host: data.host, ...frame }));
+        if (active && frames.length) {
+          setRadarFrames(frames);
+          setRadarFrameIndex(0);
           setRadarError("");
+        } else if (active) {
+          setRadarError("No radar frames are currently available");
         }
       })
       .catch((err) => active && setRadarError(String(err).replace(/^Error:\s*/, "")));
@@ -2536,17 +2680,30 @@ function WeatherPanel({
     return () => { active = false; window.clearInterval(timer); };
   }, [page]);
 
+  useEffect(() => {
+    if (page !== "radar" || radarFrames.length < 2) return;
+    const timer = window.setInterval(() => setRadarFrameIndex((index) => (index + 1) % radarFrames.length), 1_000);
+    return () => window.clearInterval(timer);
+  }, [page, radarFrames.length]);
+
   return (
-    <section className={`widget-panel weather-panel ${compact ? "compact" : ""}`} onDoubleClick={onFocus}>
+    <section className={`widget-panel weather-panel ${compact ? "compact" : ""} ${narrow ? "narrow" : ""}`} onDoubleClick={onFocus}>
       <div className="weather-header">
         <span>Weather</span>
         <div className="weather-header-actions">
           {!showSetup ? (
-            <div className="widget-page-control" aria-label="Weather page">
-              <button onClick={() => setPage("forecast")} disabled={page === "forecast"} title="Forecast page"><ChevronLeft size={15} /></button>
-              <span>{page === "forecast" ? "1 / 2" : "2 / 2"}</span>
-              <button onClick={() => setPage("radar")} disabled={page === "radar"} title="Radar page"><ChevronRight size={15} /></button>
-            </div>
+            <button
+              className={`weather-rain-history-toggle ${rainHistoryPeriod ? "active" : ""}`}
+              onClick={cycleRainHistory}
+              title={rainHistoryPeriod === null ? "Show rainfall over the past hour" : rainHistoryPeriod === "1h" ? "Show rainfall over the past 24 hours" : "Return to forecast"}
+            >{rainHistoryPeriod ? `Rain ${rainHistoryPeriod}` : "Rain History"}</button>
+          ) : null}
+          {!showSetup ? (
+            <button
+              className={`weather-radar-toggle ${page === "radar" ? "active" : ""}`}
+              onClick={() => { setRainHistoryPeriod(null); setPage((current) => current === "radar" ? "forecast" : "radar"); }}
+              title={page === "radar" ? "Hide radar" : "Show radar"}
+            >{page === "radar" ? "Hide Radar" : "Show Radar"}</button>
           ) : null}
           {showSetup && location ? (
             <button className="icon-button" title="Close weather settings" onClick={() => setSettingsOpen(false)}><X size={16} /></button>
@@ -2588,10 +2745,20 @@ function WeatherPanel({
             onMonochromeChange={setRadarMonochrome}
           />
           <div className="radar-caption">
-            <span>{radarFrame ? `Radar ${new Date(radarFrame.time * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Loading radar"}</span>
+            <span>{radarFrame ? `${radarFrame.forecast ? "Forecast" : radarFrameIndex === radarFrames.length - 1 ? "Latest radar" : "Radar movement"} ${new Date(radarFrame.time * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${radarFrameIndex + 1}/${radarFrames.length}` : "Loading radar"}</span>
             <a href="https://www.rainviewer.com/" target="_blank" rel="noreferrer">Weather data by RainViewer</a>
           </div>
           {radarError ? <div className="map-feed-error">{radarError}</div> : null}
+        </div>
+      ) : weather && rainHistoryPeriod ? (
+        <div className="rain-history-page">
+          <div className="weather-location">{location.name}{location.admin1 ? `, ${location.admin1}` : ""}</div>
+          <div className="rain-history-summary">
+            <div><strong>{rainHistoryTotal.toFixed(1)}</strong><span> mm</span></div>
+            <span>Rainfall in the past {rainHistoryPeriod === "1h" ? "hour" : "24 hours"}</span>
+          </div>
+          <RainHistoryGraph history={visibleRainHistory} period={rainHistoryPeriod} />
+          <small className="rain-history-note">Open-Meteo hourly precipitation · button cycles 1h, 24h and forecast</small>
         </div>
       ) : weather && activeDay ? (
         <>
@@ -2625,6 +2792,21 @@ function WeatherPanel({
         </div>
       )}
     </section>
+  );
+}
+
+function RainHistoryGraph({ history, period }: { history: { time: string; value: number }[]; period: "1h" | "24h" }) {
+  const values = history.length ? history : [{ time: new Date().toISOString(), value: 0 }];
+  const max = Math.max(0.2, ...values.map((item) => item.value));
+  return (
+    <div className={`rain-history-graph rain-history-${period}`} aria-label={`Rainfall over the past ${period === "1h" ? "hour" : "24 hours"}`}>
+      {values.map((item, index) => (
+        <div className="rain-history-column" key={`${item.time}-${index}`} title={`${new Date(item.time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}: ${item.value.toFixed(1)} mm`}>
+          <span style={{ height: `${Math.max(item.value > 0 ? 5 : 1, item.value / max * 100)}%` }} />
+          {(period === "1h" || index % 6 === 0 || index === values.length - 1) ? <small>{new Date(item.time).toLocaleTimeString([], { hour: "numeric" })}</small> : null}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -2759,6 +2941,13 @@ function SetupOverlay({
   onSaveLayout,
   onOpenCodex,
   onToggleFullscreen,
+  availableUpdate,
+  downloadedUpdate,
+  updateStatus,
+  updateBusy,
+  onCheckForUpdates,
+  onDownloadUpdate,
+  onInstallUpdate,
 }: {
   settings: StoredSettings;
   env: EnvConfig;
@@ -2780,6 +2969,13 @@ function SetupOverlay({
   onSaveLayout: (layout: WidgetLayout) => Promise<void>;
   onOpenCodex: () => void;
   onToggleFullscreen: () => void;
+  availableUpdate: AvailableUpdate | null;
+  downloadedUpdate: DownloadedUpdate | null;
+  updateStatus: string;
+  updateBusy: boolean;
+  onCheckForUpdates: () => Promise<void>;
+  onDownloadUpdate: () => Promise<DownloadedUpdate>;
+  onInstallUpdate: (installOnReboot: boolean) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<StoredSettings>({
     calendarId: "primary",
@@ -2801,6 +2997,9 @@ function SetupOverlay({
   const [adsbDraftQuery, setAdsbDraftQuery] = useState("");
   const [adsbDraftSearching, setAdsbDraftSearching] = useState(false);
   const [adsbDraftError, setAdsbDraftError] = useState("");
+  const [idleMapDraftQuery, setIdleMapDraftQuery] = useState("");
+  const [idleMapDraftSearching, setIdleMapDraftSearching] = useState(false);
+  const [idleMapDraftError, setIdleMapDraftError] = useState("");
 
   useEffect(() => {
     setDraft({
@@ -2876,6 +3075,31 @@ function SetupOverlay({
     }
   }
 
+  async function setIdleMapLocation(useCurrent = false) {
+    setIdleMapDraftSearching(true);
+    setIdleMapDraftError("");
+    try {
+      const location = useCurrent ? await onResolveCurrentWeatherLocation() : await onFindWeatherLocation(idleMapDraftQuery);
+      if (location) {
+        setDraft({ ...draft, idleMapLocation: location });
+        setIdleMapDraftQuery("");
+      }
+    } catch (err) {
+      setIdleMapDraftError(friendlyWeatherError(err));
+    } finally {
+      setIdleMapDraftSearching(false);
+    }
+  }
+
+  async function chooseSlideshowFolder() {
+    try {
+      const folder = await invoke<string | null>("select_slideshow_folder");
+      if (folder) setDraft({ ...draft, idleSlideshowFolder: folder });
+    } catch (err) {
+      setIdleMapDraftError(`Could not open the folder picker: ${String(err)}`);
+    }
+  }
+
   return (
     <div className="setup-backdrop">
       <section className="setup-panel">
@@ -2910,8 +3134,54 @@ function SetupOverlay({
             />
             <div>{APP_SCALES.map((scale) => <button key={scale} className={normalizeAppScale(draft.appScale) === scale ? "selected" : ""} onClick={() => setDraft({ ...draft, appScale: scale })}>{scale}%</button>)}</div>
           </div>
+          <div className="idle-settings">
+            <label>
+              <span>No-widgets background</span>
+              <select value={normalizeIdleBackground(draft.idleBackground)} onChange={(event) => setDraft({ ...draft, idleBackground: normalizeIdleBackground(event.target.value) })}>
+                <option value="waves">Waves (original)</option>
+                <option value="fish">Pixel fish pond</option>
+                <option value="reactive">Reactive sea</option>
+                <option value="topographic">Panning topographic map</option>
+                <option value="slideshow">Album slideshow</option>
+              </select>
+            </label>
+            <div className="setup-grid weather-settings-grid">
+              <label>
+                <span>Topographic map location</span>
+                <input value={idleMapDraftQuery} placeholder={draft.idleMapLocation?.name || "City or suburb"} onChange={(event) => setIdleMapDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); setIdleMapLocation(); } }} />
+              </label>
+              <div className="weather-settings-actions">
+                <button onClick={() => setIdleMapLocation()}>{idleMapDraftSearching ? "Searching" : "Search"}</button>
+                <button onClick={() => setIdleMapLocation(true)}>Use Location</button>
+              </div>
+            </div>
+            <div className="folder-setting">
+              <div><span>Slideshow album folder</span><small>{draft.idleSlideshowFolder || "No folder selected"}</small></div>
+              <button onClick={chooseSlideshowFolder}>Choose folder</button>
+            </div>
+            {idleMapDraftError ? <p className="error-line">{idleMapDraftError}</p> : null}
+          </div>
+          <div className="update-settings">
+            <label>
+              <span>Application updates</span>
+              <select value={normalizeUpdatePreference(draft.updatePreference)} onChange={(event) => setDraft({ ...draft, updatePreference: normalizeUpdatePreference(event.target.value) })}>
+                <option value="notify">Check and ask me</option>
+                <option value="auto-download">Automatically download</option>
+                <option value="auto-install">Automatically download and install</option>
+                <option value="ignore">Ignore updates</option>
+              </select>
+            </label>
+            <div className="update-actions">
+              <button disabled={updateBusy} onClick={() => onCheckForUpdates().catch((err) => setIdleMapDraftError(String(err)))}>Check now</button>
+              {availableUpdate && !downloadedUpdate ? <button disabled={updateBusy || !availableUpdate.assetUrl} onClick={() => onDownloadUpdate().catch((err) => setIdleMapDraftError(String(err)))}>Download {availableUpdate.version}</button> : null}
+              {downloadedUpdate ? <button disabled={updateBusy} onClick={() => onInstallUpdate(false).catch((err) => setIdleMapDraftError(String(err)))}>Install now</button> : null}
+              {downloadedUpdate ? <button disabled={updateBusy} onClick={() => onInstallUpdate(true).catch((err) => setIdleMapDraftError(String(err)))}>Install next reboot</button> : null}
+            </div>
+            {updateStatus ? <small className="update-status">{updateStatus}</small> : null}
+            {availableUpdate?.notes ? <details><summary>What’s new in {availableUpdate.version}</summary><p>{availableUpdate.notes.slice(0, 1200)}</p></details> : null}
+          </div>
         </section>
-        <section className="settings-section calendar-settings-group">
+        {WIDGET_FEATURE_FLAGS.calendar ? <section className="settings-section calendar-settings-group">
           <div className="calendar-style-setting calendar-style-setting-primary">
             <span>Calendar Style</span>
             <div className="calendar-style-toggle" role="radiogroup" aria-label="Calendar style">
@@ -3061,9 +3331,9 @@ function SetupOverlay({
           </div>
           <p className="setup-note">Paste a public .ics or webcal:// link. The calendar is read-only and refreshed with the dashboard.</p>
         </div>
-        </section>
+        </section> : null}
 
-        <section className="settings-section">
+        {WIDGET_FEATURE_FLAGS.spotify ? <section className="settings-section">
           <div className="provider-panel">
             <div>
               <strong>Spotify</strong>
@@ -3108,9 +3378,9 @@ function SetupOverlay({
             </div>
           ) : null}
           {spotifyConnected ? <button className="section-secondary" onClick={() => onDisconnect("spotify")}>Clear Spotify</button> : null}
-        </section>
+        </section> : null}
 
-        <section className="settings-section">
+        {WIDGET_FEATURE_FLAGS.weather ? <section className="settings-section">
           <div className="provider-panel">
             <div>
               <strong>Weather</strong>
@@ -3142,9 +3412,9 @@ function SetupOverlay({
             </div>
           </div>
           {weatherDraftError ? <p className="error-line">{weatherDraftError}</p> : null}
-        </section>
+        </section> : null}
 
-        <section className="settings-section">
+        {WIDGET_FEATURE_FLAGS.aircraft ? <section className="settings-section">
           <div className="provider-panel">
             <div>
               <strong>Live Aircraft (ADS-B)</strong>
@@ -3176,9 +3446,9 @@ function SetupOverlay({
           </div>
           <label className="checkbox-setting"><input type="checkbox" checked={Boolean(draft.adsbGraphicOnly)} onChange={(event) => setDraft({ ...draft, adsbGraphicOnly: event.target.checked })} /> Aircraft graphics only by default</label>
           {adsbDraftError ? <p className="error-line">{adsbDraftError}</p> : null}
-        </section>
+        </section> : null}
 
-        <section className="settings-section">
+        {WIDGET_FEATURE_FLAGS.codex ? <section className="settings-section">
           <div className="provider-panel">
             <div>
               <strong>Codex</strong>
@@ -3224,9 +3494,9 @@ function SetupOverlay({
               />
             </label>
           </div>
-        </section>
+        </section> : null}
 
-        <section className="settings-section">
+        {WIDGET_FEATURE_FLAGS.terminal ? <section className="settings-section">
           <div className="provider-panel">
             <div>
               <strong>Command Line</strong>
@@ -3244,7 +3514,7 @@ function SetupOverlay({
               />
             </label>
           </div>
-        </section>
+        </section> : null}
 
         <section className="layout-settings">
           <strong>Visible Widgets</strong>
@@ -3499,6 +3769,7 @@ function normalizeAircraft(value: unknown): Aircraft[] {
       latitude,
       longitude,
       altitude: numberValue(item.alt_baro ?? item.altitude),
+      onGround: item.alt_baro === "ground" || item.altitude === "ground",
       speed: numberValue(item.gs ?? item.speed),
       heading: numberValue(item.track ?? item.heading) || 0,
       verticalRate: numberValue(item.baro_rate ?? item.vertical_rate),
@@ -3525,6 +3796,14 @@ function formatSpeed(value: number | null) {
 
 function normalizeAppScale(value?: number): AppScale {
   return APP_SCALES.includes(value as AppScale) ? value as AppScale : 100;
+}
+
+function normalizeIdleBackground(value?: string): IdleBackgroundKind {
+  return ["waves", "fish", "reactive", "topographic", "slideshow"].includes(value || "") ? value as IdleBackgroundKind : "waves";
+}
+
+function normalizeUpdatePreference(value?: string): UpdatePreference {
+  return ["notify", "auto-download", "auto-install", "ignore"].includes(value || "") ? value as UpdatePreference : "notify";
 }
 
 function normalizeSettings(settings: StoredSettings): StoredSettings {
@@ -3554,6 +3833,10 @@ function normalizeSettings(settings: StoredSettings): StoredSettings {
     adsbApiUrl: settings.adsbApiUrl?.trim() || DEFAULT_ADSB_API_URL,
     adsbApiKey: settings.adsbApiKey?.trim(),
     adsbGraphicOnly: Boolean(settings.adsbGraphicOnly),
+    idleBackground: normalizeIdleBackground(settings.idleBackground),
+    idleMapLocation: settings.idleMapLocation,
+    idleSlideshowFolder: settings.idleSlideshowFolder?.trim(),
+    updatePreference: normalizeUpdatePreference(settings.updatePreference),
     widgetLayout: normalizeWidgetLayout(settings.widgetLayout),
     selectedCalendarIds: Array.isArray(settings.selectedCalendarIds)
       ? settings.selectedCalendarIds.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim())
@@ -3568,13 +3851,14 @@ function normalizeCalendarStyle(style?: string): CalendarStyle {
 function normalizeWidgetLayout(layout?: WidgetLayout): WidgetLayout {
   const storedMode = (layout?.mode as string | undefined) || DEFAULT_WIDGET_LAYOUT.mode;
   const mode: WidgetLayoutMode = storedMode === "focus" ? "focus" : "thirds";
-  const order = (layout?.order || DEFAULT_WIDGET_LAYOUT.order).filter(isWidgetId);
+  const order = (layout?.order || DEFAULT_WIDGET_LAYOUT.order).filter(isEnabledWidgetId);
   const legacyLayout = Boolean(layout) && !layout?.order?.includes("calendar");
-  const visible = (layout?.visible || DEFAULT_WIDGET_LAYOUT.visible).filter(isWidgetId);
+  const visible = (layout?.visible || DEFAULT_WIDGET_LAYOUT.visible).filter(isEnabledWidgetId);
   if (legacyLayout && !visible.includes("calendar")) {
     visible.unshift("calendar");
   }
-  const withMissing = [...order, ...DEFAULT_WIDGET_LAYOUT.order.filter((widget) => !order.includes(widget))];
+  const enabledDefaults = DEFAULT_WIDGET_LAYOUT.order.filter(isEnabledWidgetId);
+  const withMissing = [...order, ...enabledDefaults.filter((widget) => !order.includes(widget))];
   const visibleWithOrder = withMissing.filter((widget) => visible.includes(widget));
   const thirdsStacked = storedMode === "side-stack" || (layout ? Boolean(layout.thirdsStacked) : Boolean(DEFAULT_WIDGET_LAYOUT.thirdsStacked));
   const sizes = withMissing.reduce<Partial<Record<WidgetId, WidgetSize>>>((next, widget) => {
@@ -3582,11 +3866,11 @@ function normalizeWidgetLayout(layout?: WidgetLayout): WidgetLayout {
     next[widget] = isWidgetSize(size) ? size : DEFAULT_WIDGET_SIZES[widget];
     return next;
   }, {});
-  const normalizedVisible = layout ? visibleWithOrder : DEFAULT_WIDGET_LAYOUT.visible;
+  const normalizedVisible = layout ? visibleWithOrder : DEFAULT_WIDGET_LAYOUT.visible.filter(isEnabledWidgetId);
   const stacks = packWidgetStacks(withMissing, normalizedVisible, layout?.stacks || DEFAULT_WIDGET_LAYOUT.stacks, sizes);
   return {
     mode,
-    order: withMissing.slice(0, DEFAULT_WIDGET_LAYOUT.order.length),
+    order: withMissing.slice(0, enabledDefaults.length),
     visible: normalizedVisible,
     thirdsStacked,
     sizes,
@@ -3817,6 +4101,10 @@ function packWidgetStacks(
 
 function isWidgetId(value: unknown): value is WidgetId {
   return value === "calendar" || value === "spotify" || value === "weather" || value === "aircraft" || value === "codex" || value === "terminal";
+}
+
+function isEnabledWidgetId(value: unknown): value is WidgetId {
+  return isWidgetId(value) && WIDGET_FEATURE_FLAGS[value];
 }
 
 function isWidgetSize(value: unknown): value is WidgetSize {
@@ -4637,6 +4925,7 @@ function mockWeather(): WeatherData {
     precipProbability: days[0].precipProbability,
     alert: "Rain likely",
     hourlyPrecip: days[0].hourly.map((hour) => ({ time: hour.time, value: hour.precip })),
+    rainHistory: days[0].hourly.map((hour) => ({ time: hour.time, value: hour.precip })).slice(-24),
     days,
   };
 }
@@ -4674,10 +4963,11 @@ function mockWeatherLocation(): WeatherLocation {
 }
 
 function mockAircraft(location: WeatherLocation): Aircraft[] {
+  const phase = Date.now() / 12_000;
   return [
-    { id: "mock:vh-vyi", flight: "QFA432", registration: "VH-VYI", aircraftType: "B738", latitude: location.latitude + 0.16, longitude: location.longitude - 0.12, altitude: 18_450, speed: 342, heading: 72, verticalRate: 1_280 },
-    { id: "mock:vh-ueb", flight: "VOZ841", registration: "VH-UEB", aircraftType: "B38M", latitude: location.latitude - 0.09, longitude: location.longitude + 0.21, altitude: 8_900, speed: 251, heading: 318, verticalRate: -640 },
-    { id: "mock:vh-ykq", flight: "JST512", registration: "VH-YKQ", aircraftType: "A320", latitude: location.latitude + 0.03, longitude: location.longitude + 0.05, altitude: 3_200, speed: 168, heading: 195, verticalRate: -920 },
+    { id: "mock:vh-vyi", flight: "QFA432", registration: "VH-VYI", aircraftType: "B738", latitude: location.latitude + 0.16 + Math.sin(phase) * 0.035, longitude: location.longitude - 0.12 + Math.cos(phase) * 0.045, altitude: 18_450 + Math.round(Math.sin(phase) * 1_200), onGround: false, speed: 342, heading: 72, verticalRate: 1_280 },
+    { id: "mock:vh-ueb", flight: "VOZ841", registration: "VH-UEB", aircraftType: "B38M", latitude: location.latitude - 0.09 + Math.cos(phase * 0.8) * 0.025, longitude: location.longitude + 0.21 - Math.sin(phase * 0.8) * 0.04, altitude: 8_900, onGround: false, speed: 251, heading: 318, verticalRate: -640 },
+    { id: "mock:vh-ykq", flight: "JST512", registration: "VH-YKQ", aircraftType: "A320", latitude: location.latitude + 0.03 - Math.sin(phase * 0.6) * 0.018, longitude: location.longitude + 0.05 + Math.cos(phase * 0.6) * 0.026, altitude: 3_200, onGround: false, speed: 168, heading: 195, verticalRate: -920 },
   ];
 }
 

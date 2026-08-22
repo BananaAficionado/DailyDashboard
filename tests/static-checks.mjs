@@ -3,11 +3,13 @@ import { readFile } from "node:fs/promises";
 const capabilities = JSON.parse(await readFile(new URL("../src-tauri/capabilities/default.json", import.meta.url), "utf8"));
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+const idleSource = await readFile(new URL("../src/IdleBackgrounds.tsx", import.meta.url), "utf8");
 const mapSource = await readFile(new URL("../src/InteractiveMap.tsx", import.meta.url), "utf8");
 const cssSource = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 const htmlSource = await readFile(new URL("../index.html", import.meta.url), "utf8");
 const rustSource = await readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
 const capabilitiesSource = await readFile(new URL("../src-tauri/capabilities/default.json", import.meta.url), "utf8");
+const envExampleSource = await readFile(new URL("../.env.example", import.meta.url), "utf8");
 
 assert(
   capabilities.permissions.includes("core:window:allow-is-fullscreen") &&
@@ -67,8 +69,8 @@ assert(
     appSource.includes("hideWidget") &&
     appSource.includes("railWidgetActive") &&
     appSource.includes("calendar-widget-size-${widgetSize(widget)}") &&
-    appSource.includes("empty-wave-field") &&
-    appSource.includes("empty-dashboard-content"),
+    idleSource.includes("empty-wave-field") &&
+    idleSource.includes("empty-dashboard-content"),
   "saved widget layout tracks visible dashboard widgets, calendar as a widget, and the four allowed widget sizes"
 );
 
@@ -82,35 +84,85 @@ assert(
 );
 
 assert(
+  appSource.includes("WIDGET_FEATURE_FLAGS") &&
+    appSource.includes("VITE_FEATURE_WIDGET_CALENDAR") &&
+    appSource.includes("VITE_FEATURE_WIDGET_SPOTIFY") &&
+    appSource.includes("VITE_FEATURE_WIDGET_WEATHER") &&
+    appSource.includes("VITE_FEATURE_WIDGET_AIRCRAFT") &&
+    appSource.includes("VITE_FEATURE_WIDGET_CODEX, false") &&
+    appSource.includes("VITE_FEATURE_WIDGET_TERMINAL") &&
+    appSource.includes("filter(isEnabledWidgetId)") &&
+    appSource.includes("WIDGET_FEATURE_FLAGS.codex ? <section") &&
+    envExampleSource.includes("VITE_FEATURE_WIDGET_CODEX=false"),
+  "every widget has a release flag and Codex defaults off in layouts, the rail, and Settings"
+);
+
+assert(
+  appSource.includes("calendarTimeColumnWidth = calendarNarrow ? 48 : 72") &&
+    appSource.includes("if (calendarNarrow) setCalendarSourcePanelOpen(false)") &&
+    cssSource.includes(".calendar-widget-size-tall .calendar-source-sidebar") &&
+    cssSource.includes("position: absolute") &&
+    cssSource.includes(".calendar-widget-size-tall .segmented") &&
+    cssSource.includes(".calendar-widget-size-tall .calendar-search"),
+  "one-column calendar keeps compact controls while calendars open in a non-width-consuming overlay"
+);
+
+assert(
   appSource.includes("AircraftPanel") &&
     appSource.includes("DEFAULT_ADSB_API_URL") &&
     appSource.includes("fetch_adsb") &&
     appSource.includes("Graphic only") &&
     appSource.includes("Set centre") &&
+    appSource.includes("historyByAircraft") &&
+    appSource.includes("trails={trails}") &&
     rustSource.includes("async fn fetch_adsb") &&
+    mapSource.includes("zoomMapAroundPoint") &&
+    mapSource.includes("map-trail-segment") &&
     cssSource.includes(".aircraft-detail") &&
+    cssSource.includes(".map-trail-segment") &&
     cssSource.includes(".aircraft-map-wrap > .interactive-map") &&
     cssSource.includes("height: 100%"),
-  "live ADS-B aircraft widget supports map navigation, aircraft selection, graphic-only mode, and persisted provider settings"
+  "live ADS-B aircraft widget supports cursor-anchored zoom, altitude-coloured selected trails, graphic-only mode, and persisted provider settings"
 );
 
 assert(
   appSource.includes("api.rainviewer.com/public/weather-maps.json") &&
     appSource.includes("Weather data by RainViewer") &&
-    appSource.includes('page === "forecast" ? "1 / 2" : "2 / 2"') &&
+    appSource.includes('page === "radar" ? "Hide Radar" : "Show Radar"') &&
+    appSource.includes("data.radar?.nowcast") &&
+    appSource.includes("setRadarFrameIndex") &&
     appSource.includes("radarMaxZoom={7}") &&
     appSource.includes("onMonochromeChange") &&
     mapSource.includes("bounds.width / Math.max(1, element.clientWidth)") &&
+    mapSource.includes("commitPan") &&
+    mapSource.includes("discontinuityLimit") &&
     mapSource.includes("data-center-longitude") &&
     cssSource.includes(".weather-radar-page") &&
+    cssSource.includes("will-change: transform") &&
     cssSource.includes(".interactive-map.map-monochrome .map-base-tile"),
-  "weather widget provides a separately pageable and attributed live radar map"
+  "weather radar has direct show/hide controls, animated observed/forecast frames, and stable buffered map panning"
 );
 
 assert(
-  (appSource.match(/className="empty-wave-line wave-/g) || []).length >= 9 &&
+  idleSource.includes("paths.map") && idleSource.includes('"one","two","three","four","five","six","seven","eight","nine"') &&
     cssSource.includes(".wave-nine"),
   "empty dashboard renders a fuller animated wave field"
+);
+
+assert(
+  appSource.includes("IdleDashboard") && idleSource.includes('"fish"') && idleSource.includes('"reactive"') &&
+    idleSource.includes('"topographic"') && idleSource.includes('"slideshow"') &&
+    idleSource.includes("Orange roughy") && idleSource.includes("Blue cod") && idleSource.includes("Gemfish") &&
+    idleSource.includes("Please select an album folder from the settings menu") &&
+    rustSource.includes("select_slideshow_folder") && rustSource.includes("read_slideshow_image"),
+  "no-widget screen offers all five persisted backgrounds and a native slideshow album folder"
+);
+
+assert(
+  appSource.includes("auto-download") && appSource.includes("auto-install") && appSource.includes("Ignore updates") &&
+    appSource.includes("Install next reboot") && rustSource.includes("check_for_updates") && rustSource.includes("download_update") &&
+    rustSource.includes("DailyDashboardUpdate") && rustSource.includes("compare_versions"),
+  "GitHub release update assistant supports automatic, immediate, next-sign-in, and ignored update modes"
 );
 
 assert(
@@ -281,6 +333,10 @@ assert(
     appSource.includes("https://api.open-meteo.com/v1/forecast") &&
     appSource.includes("https://geocoding-api.open-meteo.com/v1/search") &&
     appSource.includes("https://geocoding-api.open-meteo.com/v1/reverse") &&
+    appSource.includes('url.searchParams.set("past_hours", "24")') &&
+    appSource.includes("RainHistoryGraph") &&
+    appSource.includes("Rain History") &&
+    appSource.includes("Rain ${rainHistoryPeriod}") &&
     appSource.includes("friendlyWeatherError") &&
     appSource.includes("Close weather settings") &&
     appSource.includes("Hide Weather") &&

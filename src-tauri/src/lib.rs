@@ -1,5 +1,6 @@
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
@@ -65,6 +66,10 @@ struct StoredSettings {
     adsb_api_url: Option<String>,
     adsb_api_key: Option<String>,
     adsb_graphic_only: Option<bool>,
+    idle_background: Option<String>,
+    idle_map_location: Option<serde_json::Value>,
+    idle_slideshow_folder: Option<String>,
+    update_preference: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -131,6 +136,44 @@ struct TokenResponse {
     refresh_token: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct GithubReleaseAsset {
+    name: String,
+    browser_download_url: String,
+    digest: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    name: Option<String>,
+    body: Option<String>,
+    html_url: String,
+    draft: bool,
+    prerelease: bool,
+    assets: Vec<GithubReleaseAsset>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AvailableUpdate {
+    version: String,
+    name: String,
+    notes: String,
+    release_url: String,
+    asset_name: Option<String>,
+    asset_url: Option<String>,
+    asset_digest: Option<String>,
+    prerelease: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadedUpdate {
+    path: String,
+    asset_name: String,
+}
+
 #[tauri::command]
 fn load_initial_config(app: AppHandle) -> Result<InitialConfig, String> {
     Ok(InitialConfig {
@@ -147,6 +190,268 @@ fn save_settings(app: AppHandle, settings: StoredSettings) -> Result<(), String>
     }
     let json = serde_json::to_string_pretty(&settings).map_err(|err| err.to_string())?;
     fs::write(path, json).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn select_slideshow_folder() -> Option<String> {
+    rfd::FileDialog::new()
+        .pick_folder()
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn list_slideshow_images(folder: String) -> Result<Vec<String>, String> {
+    let folder = fs::canonicalize(folder).map_err(|err| err.to_string())?;
+    if !folder.is_dir() {
+        return Err("The selected album path is not a folder".into());
+    }
+    let mut images = fs::read_dir(folder)
+        .map_err(|err| err.to_string())?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && slideshow_mime(path).is_some())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    images.sort_by_key(|path| path.to_lowercase());
+    images.truncate(500);
+    Ok(images)
+}
+
+#[tauri::command]
+fn read_slideshow_image(path: String) -> Result<String, String> {
+    let path = fs::canonicalize(path).map_err(|err| err.to_string())?;
+    let mime =
+        slideshow_mime(&path).ok_or_else(|| "Unsupported slideshow image format".to_string())?;
+    let metadata = fs::metadata(&path).map_err(|err| err.to_string())?;
+    if metadata.len() > 50 * 1024 * 1024 {
+        return Err("Slideshow image exceeds the 50 MB limit".into());
+    }
+    let bytes = fs::read(path).map_err(|err| err.to_string())?;
+    Ok(format!(
+        "data:{};base64,{}",
+        mime,
+        general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+fn slideshow_mime(path: &std::path::Path) -> Option<&'static str> {
+    match path
+        .extension()?
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        "bmp" => Some("image/bmp"),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+async fn check_for_updates(current_version: String) -> Result<Option<AvailableUpdate>, String> {
+    let releases = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .user_agent("DailyDashboard-Updater/0.4")
+        .build()
+        .map_err(|err| err.to_string())?
+        .get("https://api.github.com/repos/BananaAficionado/DailyDashboard/releases?per_page=30")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|err| format!("Could not check GitHub releases: {}", err))?;
+    if !releases.status().is_success() {
+        return Err(format!(
+            "GitHub release check returned HTTP {}",
+            releases.status()
+        ));
+    }
+    let releases = releases
+        .json::<Vec<GithubRelease>>()
+        .await
+        .map_err(|err| err.to_string())?;
+    let next = releases
+        .into_iter()
+        .filter(|release| {
+            !release.draft && compare_versions(&release.tag_name, &current_version).is_gt()
+        })
+        .max_by(|a, b| compare_versions(&a.tag_name, &b.tag_name));
+    Ok(next.map(|release| {
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| preferred_update_asset(&asset.name));
+        AvailableUpdate {
+            version: release.tag_name.clone(),
+            name: release.name.unwrap_or_else(|| release.tag_name.clone()),
+            notes: release.body.unwrap_or_default(),
+            release_url: release.html_url,
+            asset_name: asset.map(|value| value.name.clone()),
+            asset_url: asset.map(|value| value.browser_download_url.clone()),
+            asset_digest: asset.and_then(|value| value.digest.clone()),
+            prerelease: release.prerelease,
+        }
+    }))
+}
+
+#[tauri::command]
+async fn download_update(
+    app: AppHandle,
+    asset_url: String,
+    asset_name: String,
+    asset_digest: Option<String>,
+) -> Result<DownloadedUpdate, String> {
+    let trusted_prefix = "https://github.com/BananaAficionado/DailyDashboard/releases/download/";
+    if !asset_url.starts_with(trusted_prefix) {
+        return Err(
+            "The update asset does not belong to the DailyDashboard GitHub repository".into(),
+        );
+    }
+    let safe_name = std::path::Path::new(&asset_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Invalid update filename".to_string())?;
+    if safe_name != asset_name || !preferred_update_asset(safe_name) {
+        return Err("Unsupported update asset".into());
+    }
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(300))
+        .user_agent("DailyDashboard-Updater/0.4")
+        .build()
+        .map_err(|err| err.to_string())?
+        .get(asset_url)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Update download returned HTTP {}",
+            response.status()
+        ));
+    }
+    let bytes = response.bytes().await.map_err(|err| err.to_string())?;
+    if let Some(expected) =
+        asset_digest.and_then(|value| value.strip_prefix("sha256:").map(str::to_string))
+    {
+        let actual = format!("{:x}", Sha256::digest(&bytes));
+        if !actual.eq_ignore_ascii_case(&expected) {
+            return Err("Update checksum verification failed".into());
+        }
+    }
+    let folder = app
+        .path()
+        .app_cache_dir()
+        .map_err(|err| err.to_string())?
+        .join("updates");
+    fs::create_dir_all(&folder).map_err(|err| err.to_string())?;
+    let path = folder.join(safe_name);
+    fs::write(&path, bytes).map_err(|err| err.to_string())?;
+    Ok(DownloadedUpdate {
+        path: path.to_string_lossy().into_owned(),
+        asset_name: asset_name.to_string(),
+    })
+}
+
+#[tauri::command]
+fn install_update(app: AppHandle, path: String, install_on_reboot: bool) -> Result<(), String> {
+    let path = fs::canonicalize(path).map_err(|err| err.to_string())?;
+    let update_folder = app
+        .path()
+        .app_cache_dir()
+        .map_err(|err| err.to_string())?
+        .join("updates");
+    let update_folder = fs::canonicalize(update_folder).map_err(|err| err.to_string())?;
+    if !path.starts_with(update_folder) {
+        return Err("The installer is not in DailyDashboard's verified update folder".into());
+    }
+    if !preferred_update_asset(
+        path.file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default(),
+    ) {
+        return Err("Unsupported update installer".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if install_on_reboot {
+            let command = format!("\"{}\" /S", path.display());
+            let status = Command::new("reg")
+                .args([
+                    "add",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce",
+                    "/v",
+                    "DailyDashboardUpdate",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    &command,
+                    "/f",
+                ])
+                .status()
+                .map_err(|err| err.to_string())?;
+            if !status.success() {
+                return Err("Windows could not schedule the update for the next sign-in".into());
+            }
+            return Ok(());
+        }
+        Command::new(&path)
+            .arg("/S")
+            .spawn()
+            .map_err(|err| err.to_string())?;
+        app.exit(0);
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        let _ = install_on_reboot;
+        Err("Automatic installation is currently available in the Windows build. Open the GitHub release to install this update on macOS.".into())
+    }
+}
+
+fn preferred_update_asset(name: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        name.to_ascii_lowercase().ends_with(".exe")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        name.to_ascii_lowercase().ends_with(".dmg")
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        false
+    }
+}
+
+fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    version_key(left).cmp(&version_key(right))
+}
+
+fn version_key(value: &str) -> (Vec<u32>, u32) {
+    let clean = value
+        .trim()
+        .trim_start_matches(|character: char| character == 'v' || character == 'V');
+    let suffix_start = clean
+        .find(|character: char| character.is_ascii_alphabetic())
+        .unwrap_or(clean.len());
+    let numbers = clean[..suffix_start]
+        .split('.')
+        .map(|part| part.parse::<u32>().unwrap_or(0))
+        .collect::<Vec<_>>();
+    let suffix = &clean[suffix_start..];
+    let rank = if suffix.is_empty() {
+        u32::MAX
+    } else {
+        suffix.bytes().fold(0u32, |total, byte| {
+            total
+                .saturating_mul(27)
+                .saturating_add((byte.to_ascii_uppercase().saturating_sub(b'A') + 1) as u32)
+        })
+    };
+    (numbers, rank)
 }
 
 #[tauri::command]
@@ -426,18 +731,27 @@ async fn fetch_adsb(url: String, api_key: Option<String>) -> Result<serde_json::
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client.get(parsed);
-    if let Some(key) = api_key.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) {
+    if let Some(key) = api_key
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
         request = request.header("x-rapidapi-key", &key);
         if let Some(host) = rapidapi_host {
             request = request.header("x-rapidapi-host", host);
         }
     }
-    let response = request.send().await.map_err(|err| format!("ADS-B request failed: {err}"))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|err| format!("ADS-B request failed: {err}"))?;
     let status = response.status();
     if !status.is_success() {
         return Err(format!("ADS-B request failed: {status}"));
     }
-    response.json().await.map_err(|err| format!("Invalid ADS-B response: {err}"))
+    response
+        .json()
+        .await
+        .map_err(|err| format!("Invalid ADS-B response: {err}"))
 }
 
 fn read_settings(app: &AppHandle) -> Result<StoredSettings, String> {
@@ -545,6 +859,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_initial_config,
             save_settings,
+            select_slideshow_folder,
+            list_slideshow_images,
+            read_slideshow_image,
+            check_for_updates,
+            download_update,
+            install_update,
             start_oauth_listener,
             poll_oauth_listener,
             exchange_oauth_code,
@@ -555,4 +875,15 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::compare_versions;
+    #[test]
+    fn compares_lettered_dashboard_versions() {
+        assert!(compare_versions("V0.6B", "V0.6A").is_gt());
+        assert!(compare_versions("V0.6", "V0.6B").is_gt());
+        assert!(compare_versions("V0.5", "V0.4").is_gt());
+    }
 }

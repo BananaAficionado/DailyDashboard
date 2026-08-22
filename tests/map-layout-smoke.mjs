@@ -32,8 +32,10 @@ try {
   await assertEval(cdp, `window.innerWidth === ${width} && window.innerHeight === ${height}`, `viewport is exactly ${width}×${height}`);
   await click(cdp, ".rail-button[title='Live aircraft']");
   await delay(250);
-  await click(cdp, ".weather-header button[title='Radar page']");
+  await click(cdp, ".weather-header button[title='Show radar']");
   await delay(900);
+
+  await assertEval(cdp, "document.querySelector('.weather-header button[title=\"Hide radar\"]')?.textContent.trim() === 'Hide Radar' && !document.querySelector('.widget-page-control')", "weather uses a direct Show Radar / Hide Radar control");
 
   await assertEval(cdp, `(() => {
     const grid = document.querySelector('.dashboard-grid');
@@ -53,6 +55,34 @@ try {
 
   await assertEval(cdp, "document.querySelectorAll('.interactive-map.map-monochrome').length === 2 && document.querySelectorAll('.map-theme-button[title=\"Use colour map\"]').length === 2", "both maps start in matching monochrome mode");
 
+  await delay(900);
+  await click(cdp, "[data-widget='aircraft'] .map-aircraft");
+  await delay(100);
+  await assertEval(cdp, `(() => {
+    const aircraft = document.querySelector('[data-widget="aircraft"]');
+    const colours = new Set([...aircraft.querySelectorAll('.map-aircraft')].map(node => node.dataset.altitudeColour));
+    return aircraft.querySelectorAll('.map-trail-segment').length > 0 && colours.size >= 3 && aircraft.querySelector('.aircraft-altitude-value')?.style.color;
+  })()`, "selected aircraft shows a coloured trail and ADSB Exchange altitude colours");
+
+  const wheelBefore = await readMapView(cdp, "[data-widget='aircraft'] .interactive-map");
+  await wheelMap(cdp, "[data-widget='aircraft'] .interactive-map", -120, 0.78, 0.28);
+  const wheelZoomed = await readMapView(cdp, "[data-widget='aircraft'] .interactive-map");
+  if (!(wheelZoomed.zoom === wheelBefore.zoom + 1 && wheelZoomed.longitude > wheelBefore.longitude && wheelZoomed.latitude > wheelBefore.latitude)) {
+    throw new Error(`wheel zoom should move the centre toward the cursor: ${JSON.stringify({ wheelBefore, wheelZoomed })}`);
+  }
+  await wheelMap(cdp, "[data-widget='aircraft'] .interactive-map", 120, 0.78, 0.28);
+  const wheelReturned = await readMapView(cdp, "[data-widget='aircraft'] .interactive-map");
+  if (!(Math.abs(wheelReturned.longitude - wheelBefore.longitude) < 0.01 && Math.abs(wheelReturned.latitude - wheelBefore.latitude) < 0.01)) {
+    throw new Error(`reverse wheel zoom should restore the view around the same cursor: ${JSON.stringify({ wheelBefore, wheelReturned })}`);
+  }
+  await click(cdp, "[data-widget='aircraft'] .map-controls button[title='Zoom in']");
+  const buttonZoomed = await readMapView(cdp, "[data-widget='aircraft'] .interactive-map");
+  if (!(buttonZoomed.zoom === wheelBefore.zoom + 1 && Math.abs(buttonZoomed.longitude - wheelBefore.longitude) < 0.0001 && Math.abs(buttonZoomed.latitude - wheelBefore.latitude) < 0.0001)) {
+    throw new Error(`zoom buttons should preserve the frame centre: ${JSON.stringify({ wheelBefore, buttonZoomed })}`);
+  }
+  await click(cdp, "[data-widget='aircraft'] .map-controls button[title='Zoom out']");
+  await click(cdp, "[data-widget='aircraft'] button[title='Close aircraft details']");
+
   for (const selector of ["[data-widget='aircraft'] .interactive-map", "[data-widget='weather'] .interactive-map"]) {
     const before = await readMapView(cdp, selector);
     await dragMap(cdp, selector, 120, 40);
@@ -65,6 +95,16 @@ try {
     if (!(Math.abs(returned.longitude - before.longitude) < 0.08 && Math.abs(returned.latitude - before.latitude) < 0.08)) {
       throw new Error(`${selector} reverse drag should return close to its starting centre: ${JSON.stringify({ before, returned })}`);
     }
+  }
+
+  await assertEval(cdp, "[...document.querySelectorAll('.map-tiles')].every(layer => getComputedStyle(layer).zIndex === '0' && layer.style.transform.includes('translate3d(0px, 0px, 0px)'))", "completed drags retain a compositor-safe tile layer and clear their temporary offset");
+
+  await delay(1200);
+  const firstRadarCaption = await readText(cdp, ".radar-caption span");
+  await delay(1200);
+  const secondRadarCaption = await readText(cdp, ".radar-caption span");
+  if (firstRadarCaption === secondRadarCaption || !/Radar movement|Latest radar|Forecast/.test(secondRadarCaption)) {
+    throw new Error(`weather radar should animate through timestamped frames: ${JSON.stringify({ firstRadarCaption, secondRadarCaption })}`);
   }
 
   await cdp.send("Runtime.evaluate", { expression: "[...document.querySelectorAll('.map-theme-button')].forEach(button => button.click())", awaitPromise: true });
@@ -137,6 +177,14 @@ async function readMapView(cdp, selector) {
   return result.result.result.value;
 }
 
+async function readText(cdp, selector) {
+  const result = await cdp.send("Runtime.evaluate", {
+    expression: `document.querySelector(${JSON.stringify(selector)})?.textContent || ""`,
+    returnByValue: true,
+  });
+  return result.result.result.value;
+}
+
 async function dragMap(cdp, selector, deltaX, deltaY) {
   const boundsResult = await cdp.send("Runtime.evaluate", {
     expression: `(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width * 0.3, y: rect.top + rect.height * 0.72 }; })()`,
@@ -156,6 +204,17 @@ async function dragMap(cdp, selector, deltaX, deltaY) {
     await delay(35);
   }
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: start.x + deltaX, y: start.y + deltaY, button: "left", buttons: 0, clickCount: 1 });
+  await delay(120);
+}
+
+async function wheelMap(cdp, selector, deltaY, xRatio, yRatio) {
+  const boundsResult = await cdp.send("Runtime.evaluate", {
+    expression: `(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width * ${xRatio}, y: rect.top + rect.height * ${yRatio} }; })()`,
+    returnByValue: true,
+  });
+  const point = boundsResult.result.result.value;
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: point.x, y: point.y, deltaX: 0, deltaY });
   await delay(120);
 }
 

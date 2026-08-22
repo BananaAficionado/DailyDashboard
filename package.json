@@ -11,6 +11,7 @@
     "test:ui": "node tests/ui-smoke.mjs",
     "test:short": "node tests/short-viewport.mjs",
     "test:maps": "node tests/map-layout-smoke.mjs",
+    "test:responsive": "node tests/responsive-widget-smoke.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",

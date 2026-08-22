@@ -62,8 +62,9 @@ button {
 .map-tiles {
   position: absolute;
   inset: 0;
-  z-index: -1;
+  z-index: 0;
   pointer-events: none;
+  will-change: transform;
 }
 
 .map-tile-stack {
@@ -151,9 +152,23 @@ button {
 .map-aircraft.selected {
   z-index: 5;
   color: #fff;
-  background: #d94242;
   border-color: #fff;
+  box-shadow: 0 0 0 2px #fff, 0 3px 10px #000c;
 }
+
+.map-trails {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+.map-trail-outline,
+.map-trail-segment { fill: none; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
+.map-trail-outline { stroke: #080b0ee6; stroke-width: 5; }
+.map-trail-segment { stroke-width: 3; }
 
 .aircraft-panel,
 .weather-radar-page {
@@ -231,6 +246,7 @@ button {
 .aircraft-detail dl div { min-width: 58px; }
 .aircraft-detail dt, .aircraft-detail dd { margin: 0; }
 .aircraft-detail dd { margin-top: 2px; font-size: 10px; font-weight: 800; }
+.aircraft-altitude-value { text-shadow: 0 1px 2px #000, 0 0 4px #000; }
 .map-feed-error {
   position: absolute;
   right: 8px;
@@ -248,6 +264,17 @@ button {
 .widget-page-control span { min-width: 30px; color: #aeb6c2; font-size: 9px; text-align: center; }
 .widget-page-control button { display: grid; place-items: center; width: 23px; height: 23px; border-radius: 4px; background: #292e36; }
 .widget-page-control button:disabled { opacity: .35; }
+.weather-radar-toggle {
+  min-width: 68px;
+  padding: 5px 8px;
+  border: 1px solid #464d58;
+  border-radius: 4px;
+  color: #dfe5ee;
+  background: #292e36;
+  font-size: 9px;
+  font-weight: 800;
+}
+.weather-radar-toggle.active { color: #15191e; background: #a8c7fa; }
 .weather-radar-page { position: relative; display: flex; flex: 1 1 auto; height: auto; min-height: 0; overflow: hidden; }
 .weather-radar-page > .interactive-map { flex: 1 1 auto; min-width: 0; min-height: 0; }
 .radar-caption {
@@ -271,6 +298,22 @@ button {
 .scale-setting > div { display: flex; justify-content: space-between; gap: 5px; }
 .scale-setting button { flex: 1; padding: 5px 2px; border: 1px solid #3d444f; border-radius: 4px; background: #262b32; font-size: 10px; }
 .scale-setting button.selected { color: #11161d; background: #a8c7fa; }
+.idle-settings { display: grid; gap: 10px; margin-top: 12px; padding-top: 11px; border-top: 1px solid #30353d; }
+.idle-settings > label { display: grid; gap: 5px; color: #dce2eb; font-size: 11px; }
+.idle-settings select { min-height: 34px; padding: 0 9px; border: 1px solid #3d444f; border-radius: 5px; color: #eef3fa; background: #21252b; }
+.folder-setting { display: flex; align-items: center; justify-content: space-between; min-width: 0; gap: 10px; }
+.folder-setting > div { display: grid; min-width: 0; gap: 2px; font-size: 11px; }
+.folder-setting small { overflow: hidden; color: #9ea8b5; text-overflow: ellipsis; white-space: nowrap; }
+.folder-setting button { flex: 0 0 auto; padding: 7px 10px; border-radius: 5px; background: #2a3038; font-size: 10px; }
+.update-settings { display: grid; gap: 8px; margin-top: 12px; padding-top: 11px; border-top: 1px solid #30353d; }
+.update-settings > label { display: grid; gap: 5px; color: #dce2eb; font-size: 11px; }
+.update-settings select { min-height: 34px; padding: 0 9px; border: 1px solid #3d444f; border-radius: 5px; color: #eef3fa; background: #21252b; }
+.update-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.update-actions button { padding: 7px 10px; border-radius: 5px; background: #2a3038; font-size: 10px; }
+.update-actions button:disabled { cursor: default; opacity: .45; }
+.update-status { color: #aeb9c7; }
+.update-settings details { color: #b9c5d3; font-size: 10px; }
+.update-settings details p { max-height: 90px; overflow: auto; white-space: pre-wrap; }
 .checkbox-setting { display: flex; align-items: center; gap: 7px; margin-top: 10px; color: #dce2eb; font-size: 11px; }
 
 .app-shell.rail-peek-closed {
@@ -291,6 +334,11 @@ button {
   padding: 3px;
   overflow: auto;
   background: #323640;
+}
+
+.dashboard-grid.empty-dashboard-grid {
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .dashboard-widget {
@@ -511,7 +559,10 @@ button {
   grid-row: 1 / -1;
   display: grid;
   place-items: center;
-  min-height: calc(100vh - 6px);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
   isolation: isolate;
   color: #eef4ff;
@@ -610,6 +661,8 @@ button {
 }
 
 .empty-dashboard-content {
+  position: relative;
+  z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -620,6 +673,101 @@ button {
   opacity: 1;
   transform: translateY(0);
   transition: opacity 260ms ease, transform 260ms ease;
+}
+
+.idle-background-picker {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 8;
+  display: flex;
+  max-width: calc(100% - 24px);
+  padding: 4px;
+  gap: 3px;
+  border: 1px solid rgba(190, 210, 235, .18);
+  border-radius: 10px;
+  background: rgba(12, 16, 22, .7);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .28);
+  transform: translateX(-50%);
+  backdrop-filter: blur(12px);
+}
+
+.idle-background-picker button {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 7px 10px;
+  gap: 6px;
+  border-radius: 7px;
+  color: #bdc9d9;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.idle-background-picker button:hover { background: rgba(255, 255, 255, .08); }
+.idle-background-picker button.selected { color: #101820; background: #a8c7fa; }
+
+.pixel-fish-pond,
+.reactive-sea,
+.idle-topographic-map,
+.idle-slideshow,
+.idle-slideshow-message {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.pixel-fish-pond {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(89, 163, 142, .22), transparent 24%),
+    radial-gradient(circle at 80% 68%, rgba(52, 122, 147, .24), transparent 28%),
+    repeating-linear-gradient(135deg, transparent 0 20px, rgba(255,255,255,.018) 21px 22px),
+    #173d49;
+}
+
+.pixel-fish-lane {
+  position: absolute;
+  left: -90px;
+  width: 72px;
+  animation: pixel-fish-swim 24s linear infinite;
+  will-change: transform;
+}
+
+.pixel-fish { width: 72px; filter: drop-shadow(0 5px 5px rgba(0, 0, 0, .32)); image-rendering: pixelated; }
+.pixel-fish-lane:nth-child(even) .pixel-fish { transform: scaleX(-1); }
+.pixel-fish-lane:nth-child(even) { animation-name: pixel-fish-swim-reverse; left: auto; right: -90px; }
+
+.pond-lily { position: absolute; width: 72px; height: 58px; border-radius: 50%; background: #477e57; box-shadow: inset -9px -7px #315f43, 0 9px 24px rgba(0,0,0,.22); }
+.pond-lily::after { content: ""; position: absolute; inset: -1px 27px 27px; background: #173d49; transform: rotate(34deg); }
+.lily-one { left: 12%; top: 12%; transform: scale(.72); }
+.lily-two { right: 9%; bottom: 13%; transform: scale(1.15) rotate(50deg); }
+
+.reactive-sea { overflow: hidden; background: radial-gradient(circle at 50% 50%, #173a4c, #0e1b2a 70%); }
+.reactive-sea i { position: absolute; width: 5px; height: 5px; margin: -2px; border-radius: 50%; background: #83cce0; box-shadow: 0 0 12px rgba(118, 221, 238, .45); transition: transform 70ms linear; animation: reactive-dot-pulse 4s ease-in-out infinite; will-change: transform; }
+.idle-topographic-map .interactive-map { cursor: default; filter: saturate(.35) brightness(.56) contrast(1.12); transform: scale(1.04); }
+.idle-topographic-map .map-attribution { bottom: 48px; }
+.idle-slideshow { overflow: hidden; background: #090b0f; }
+.idle-slideshow img { width: 100%; height: 100%; object-fit: cover; animation: slideshow-enter 900ms ease; }
+.idle-slideshow::after { content: ""; position: absolute; inset: 0; background: linear-gradient(rgba(0,0,0,.12), rgba(0,0,0,.34)); }
+.idle-slideshow-message { display: grid; place-content: center; justify-items: center; gap: 12px; padding: 30px; color: #d8e5f2; text-align: center; background: radial-gradient(circle, #243b50, #111a25); }
+
+@keyframes pixel-fish-swim { to { transform: translateX(calc(100vw + 180px)) translateY(14px); } }
+@keyframes pixel-fish-swim-reverse { to { transform: translateX(calc(-100vw - 180px)) translateY(-12px); } }
+@keyframes reactive-dot-pulse { 50% { opacity: .35; } }
+@keyframes slideshow-enter { from { opacity: .25; transform: scale(1.025); } }
+
+@media (max-width: 760px) {
+  .idle-background-picker button { padding: 7px; }
+  .idle-background-picker button span { display: none; }
+}
+
+@media (max-height: 430px) {
+  .idle-background-picker { bottom: 7px; }
+  .empty-dashboard-content { transform: scale(.78); }
+  .empty-dashboard-content.is-hidden { transform: translateY(8px) scale(.78); }
 }
 
 .empty-dashboard-content.is-hidden {
@@ -1065,21 +1213,66 @@ button {
 
 .calendar-widget-size-half .topbar,
 .calendar-widget-size-tall .topbar {
-  gap: 8px;
-  padding: 0 10px;
+  position: relative;
+  z-index: 9;
+  gap: 4px;
+  padding: 0 6px;
+  overflow: visible;
 }
 
 .calendar-widget-size-half .brand > span:nth-child(2),
-.calendar-widget-size-half .today-button,
-.calendar-widget-size-half .segmented,
 .calendar-widget-size-tall .brand > span:nth-child(2) {
+  display: none;
+}
+
+.calendar-widget-size-half .brand,
+.calendar-widget-size-tall .brand {
+  min-width: auto;
+  gap: 0;
+}
+
+.calendar-widget-size-half .date-tile,
+.calendar-widget-size-tall .date-tile {
+  width: 32px;
+  height: 32px;
+  font-size: 17px;
+}
+
+.calendar-widget-size-half .today-button,
+.calendar-widget-size-tall .today-button {
+  height: 30px;
+  padding: 0 9px;
+}
+
+.calendar-widget-size-half .icon-button,
+.calendar-widget-size-tall .icon-button {
+  width: 30px;
+  height: 30px;
+}
+
+.calendar-widget-size-half .topbar-spacer,
+.calendar-widget-size-tall .topbar-spacer,
+.calendar-widget-size-half .date-heading h1,
+.calendar-widget-size-tall .date-heading h1,
+.calendar-widget-size-half .calendar-refresh-button,
+.calendar-widget-size-tall .calendar-refresh-button {
   display: none;
 }
 
 .calendar-widget-size-half .date-heading,
 .calendar-widget-size-tall .date-heading {
-  min-width: 0;
-  max-width: 150px;
+  min-width: auto;
+  max-width: 58px;
+}
+
+.calendar-widget-size-half .calendar-search,
+.calendar-widget-size-tall .calendar-search {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 40px;
+  z-index: 12;
+  width: min(230px, calc(100% - 52px));
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
 }
 
 .calendar-widget-size-half .date-heading h1,
@@ -1094,12 +1287,53 @@ button {
 
 .calendar-widget-size-half .current-time,
 .calendar-widget-size-tall .current-time {
+  margin-left: 0;
   font-size: 12px;
+}
+
+.calendar-widget-size-half .current-time > span:first-child,
+.calendar-widget-size-tall .current-time > span:first-child {
+  display: none;
+}
+
+.calendar-widget-size-half .segmented,
+.calendar-widget-size-tall .segmented {
+  height: 30px;
+  padding: 2px;
+}
+
+.calendar-widget-size-half .segmented button,
+.calendar-widget-size-tall .segmented button {
+  height: 24px;
+  padding: 0 6px;
+  font-size: 10px;
 }
 
 .calendar-widget-size-half .calendar-card,
 .calendar-widget-size-tall .calendar-card {
-  grid-template-columns: 42px minmax(0, 1fr);
+  display: block;
+}
+
+.app-shell.app-scale-200 .calendar-widget-size-tall .topbar {
+  flex-wrap: wrap;
+  align-content: center;
+  height: 76px;
+  padding: 5px 6px;
+  gap: 4px;
+}
+
+.app-shell.app-scale-200 .calendar-widget-size-tall .date-heading {
+  order: 5;
+  flex: 0 0 54px;
+}
+
+.app-shell.app-scale-200 .calendar-widget-size-tall .topbar-spacer { display: block; order: 6; flex-basis: 100%; height: 0; }
+.app-shell.app-scale-200 .calendar-widget-size-tall .calendar-refresh-button { display: grid; order: 7; }
+.app-shell.app-scale-200 .calendar-widget-size-tall .segmented { order: 8; }
+.app-shell.app-scale-200 .calendar-widget-size-tall .topbar > .icon-button:last-child { order: 9; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pixel-fish-lane, .reactive-sea i, .idle-slideshow img { animation-play-state: paused; }
 }
 
 .calendar-widget-size-half .source-panel-toggle,
@@ -1108,11 +1342,41 @@ button {
   padding: 0;
 }
 
-.calendar-widget-size-half .source-panel-toggle span,
-.calendar-widget-size-half .source-panel-content,
-.calendar-widget-size-tall .source-panel-toggle span,
-.calendar-widget-size-tall .source-panel-content {
+.calendar-widget-size-half .calendar-source-sidebar,
+.calendar-widget-size-tall .calendar-source-sidebar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 8;
+  width: 36px;
+  box-shadow: 8px 0 20px rgba(0, 0, 0, 0.2);
+  transition: width 160ms ease;
+}
+
+.calendar-widget-size-half .sources-open .calendar-source-sidebar,
+.calendar-widget-size-tall .sources-open .calendar-source-sidebar {
+  width: min(210px, 72%);
+  box-shadow: 14px 0 28px rgba(0, 0, 0, 0.5);
+}
+
+.calendar-widget-size-half .sources-collapsed .source-panel-toggle span,
+.calendar-widget-size-half .sources-collapsed .source-panel-content,
+.calendar-widget-size-tall .sources-collapsed .source-panel-toggle span,
+.calendar-widget-size-tall .sources-collapsed .source-panel-content {
   display: none;
+}
+
+.calendar-widget-size-half .calendar-scroll,
+.calendar-widget-size-tall .calendar-scroll {
+  width: 100%;
+  height: 100%;
+}
+
+.calendar-widget-size-half .timezone,
+.calendar-widget-size-tall .timezone,
+.calendar-widget-size-half .time-label,
+.calendar-widget-size-tall .time-label {
+  padding-right: 5px;
+  font-size: 10px;
 }
 
 .calendar-source-sidebar {
@@ -1779,6 +2043,98 @@ button {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.weather-rain-history-toggle.active,
+.weather-radar-toggle.active {
+  border-color: #5bbcff;
+  color: #9bdcff;
+}
+
+.weather-rain-history-toggle {
+  white-space: nowrap;
+}
+
+.weather-panel.narrow .weather-header button {
+  padding: 0 7px;
+  font-size: 10px;
+}
+
+.weather-panel.narrow .weather-header .icon-button {
+  width: 26px;
+  padding: 0;
+}
+
+.rain-history-page {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rain-history-summary {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #2f3540;
+  border-radius: 8px;
+  background: #101316;
+}
+
+.rain-history-summary strong {
+  color: #f1f5fb;
+  font-size: 38px;
+  line-height: 1;
+}
+
+.rain-history-summary span {
+  color: #aeb9c8;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.rain-history-graph {
+  display: flex;
+  flex: 1;
+  min-height: 88px;
+  align-items: stretch;
+  gap: 3px;
+  padding: 10px 8px 0;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(48, 105, 190, 0.16), rgba(16, 19, 22, 0.4));
+}
+
+.rain-history-column {
+  display: flex;
+  flex: 1;
+  min-width: 2px;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+}
+
+.rain-history-column > span {
+  width: min(100%, 18px);
+  min-height: 1px;
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, #9bdcff, #3079e8);
+}
+
+.rain-history-column small {
+  height: 13px;
+  color: #8f9bad;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.rain-history-note {
+  color: #8f9bad;
+  font-size: 9px;
 }
 
 .spotify-panel {

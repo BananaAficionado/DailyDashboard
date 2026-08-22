@@ -2,9 +2,15 @@
 
 Current release: **V0.4** (`0.4.0`).
 
-A Tauri v2 desktop dashboard sized for a 1280 x 400 ultrawide display. It includes calendar, Spotify, weather, live ADS-B aircraft, Codex, and command-line widgets in a configurable layout.
+A Tauri v2 desktop dashboard sized for a 1280 x 400 ultrawide display. It supports calendar, Spotify, weather, live ADS-B aircraft, Codex, and command-line widgets in a configurable layout; individual widgets can be omitted from a release build.
+
+Release builds expose one Vite feature flag per widget: `VITE_FEATURE_WIDGET_CALENDAR`, `VITE_FEATURE_WIDGET_SPOTIFY`, `VITE_FEATURE_WIDGET_WEATHER`, `VITE_FEATURE_WIDGET_AIRCRAFT`, `VITE_FEATURE_WIDGET_CODEX`, and `VITE_FEATURE_WIDGET_TERMINAL`. All default to enabled except Codex, which defaults to disabled and is removed from the dashboard rail, saved layouts, and Settings UI unless explicitly enabled at build time.
 
 The Settings page includes full-application scaling at 75%, 100%, 125%, 150%, and 200% for small high-resolution displays. Scaling applies to the complete interface, including text, buttons, widgets, and Settings.
+
+When every widget is hidden, the idle screen offers five persistent backgrounds directly from its bottom selector: the original animated waves, a top-down pixel fish pond, a pointer-reactive sea of dots, an automatically panning topographic map, and an album slideshow. The topographic location and slideshow folder are configured in Settings. Album images are read locally and are never uploaded; supported formats are JPEG, PNG, WebP, GIF, and BMP.
+
+Installed builds can check `BananaAficionado/DailyDashboard` GitHub Releases for newer versions. Settings provides ask-first, automatic download, automatic Windows installation, and fully ignored modes. A downloaded Windows installer can run immediately or be scheduled through the current user's `RunOnce` entry for the next sign-in. Version ordering supports lettered releases (`V0.6B` is newer than `V0.6A`, while a final `V0.6` is newer than both). Update downloads are restricted to this repository's release URLs and SHA-256 verified when GitHub supplies an asset digest.
 
 The live aircraft widget defaults to the [ADSB.lol point/radius API](https://api.adsb.lol/) and refreshes every 10 seconds while visible. It supports mouse/touch panning, wheel/buttons/pinch zooming, device or searched locations, a saved manual map centre, selectable aircraft details, and graphic-only mode. An ADSB Exchange/RapidAPI-compatible URL template and key can be entered in Settings. URL templates use `{lat}`, `{lon}`, and `{radius}` placeholders.
 
@@ -64,7 +70,7 @@ All project libraries are declared and version-locked in `package.json`, `packag
 
 - Frontend/runtime: React, React DOM, Lucide React, Tauri API, and the Tauri opener plugin.
 - Frontend/build: TypeScript, Vite, the Vite React plugin, Tauri CLI, and React type definitions.
-- Rust/runtime: Tauri, Tauri opener plugin, Reqwest with Rustls, Serde, Serde JSON, Base64, and URL.
+- Rust/runtime: Tauri, Tauri opener plugin, Reqwest with Rustls, Serde, Serde JSON, Base64, URL, RFD for the native album folder picker, and SHA-2 for update verification.
 - Rust/build: Tauri Build.
 
 After cloning, install the locked JavaScript dependencies (Cargo downloads the locked Rust dependencies automatically during the first Tauri command):
@@ -95,7 +101,7 @@ The Tauri config targets an NSIS setup executable. Build outputs are written und
 src-tauri/target/release/bundle/nsis/
 ```
 
-A GitHub Actions workflow is also included at `.github/workflows/windows.yml` to build the Windows installer on `windows-latest`.
+A GitHub Actions workflow is also included at `.github/workflows/windows.yml` to build the Windows installer on `windows-latest`. Pushing a `V*` tag publishes the generated NSIS installer to GitHub Releases, which is the source used by the in-app update assistant.
 
 ### Portable Windows executable
 
@@ -154,7 +160,9 @@ src-tauri/target/release/bundle/dmg/
 
 ```bash
 npm run build
+npm test
 cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Local Vite serving was also checked at `http://127.0.0.1:1420/`.
+Responsive browser smoke coverage includes 1280×400 at 75% and 100%, plus 1920×720 at 100%, 150%, and 200%. Each case verifies toolbar hit targets and pairwise geometry, the single-column calendar controls, and a fitted, non-scrolling idle screen.
