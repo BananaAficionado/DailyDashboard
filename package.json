@@ -1,19 +1,22 @@
 {
   "name": "ultrawide-daily-dashboard",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.1",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node tests/static-checks.mjs && node tests/drag-layout-mock.mjs",
+    "test": "node tests/static-checks.mjs && node tests/drag-layout-mock.mjs && node --experimental-strip-types tests/ical-recurrence.mjs && node --experimental-strip-types tests/map-tiles.mjs",
     "test:ui": "node tests/ui-smoke.mjs",
     "test:short": "node tests/short-viewport.mjs",
+    "test:maps": "node tests/map-layout-smoke.mjs",
+    "test:responsive": "node tests/responsive-widget-smoke.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:build:portable": "tauri build --no-bundle"
+    "tauri:build:portable": "tauri build --no-bundle",
+    "tauri:build:windows-cross": "tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --no-bundle"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.6.0",

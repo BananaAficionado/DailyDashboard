@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 
-const defaultOrder = ["calendar", "spotify", "weather", "codex", "terminal"];
+const defaultOrder = ["calendar", "spotify", "weather", "aircraft", "codex", "terminal"];
 const defaultSizes = {
   calendar: "wide",
   spotify: "half",
   weather: "half",
+  aircraft: "tall",
   codex: "tall",
   terminal: "tall",
 };
@@ -26,7 +27,7 @@ function cleanWidgetStacks(stacks = [], visible) {
 
 function buildDashboardEntries(layout) {
   const visible = layout.order.filter((widget) => layout.visible.includes(widget));
-  const stacks = cleanWidgetStacks(layout.stacks, visible);
+  const stacks = packWidgetStacks(layout.order, visible, layout.stacks, layout.sizes);
   const stackedWidgets = new Set(stacks.flat());
   const groups = [];
 
@@ -76,8 +77,28 @@ function buildDashboardEntries(layout) {
   return groups.flatMap((group) => (
     group.length === 2
       ? stackedEntries(group)
-      : [singleEntry(group[0], requestedWide(group[0]) ? "wide" : "tall")]
+      : [singleEntry(group[0], "tall")]
   ));
+}
+
+function packWidgetStacks(order, visible, stacks, sizes = {}) {
+  const packed = cleanWidgetStacks(stacks, visible);
+  const visibleInOrder = order.filter((widget) => visible.includes(widget));
+
+  if (visibleInOrder.length === 3 && packed.length === 0) {
+    const wide = visibleInOrder.filter((widget) => sizes[widget] === "wide");
+    const neighbours = visibleInOrder.filter((widget) => widget !== wide[0]);
+    if (wide.length === 1 && neighbours.length === 2) packed.push(neighbours);
+  }
+
+  while (visibleInOrder.length - packed.length > 3) {
+    const stacked = new Set(packed.flat());
+    const singles = visibleInOrder.filter((widget) => !stacked.has(widget));
+    if (singles.length < 2) break;
+    packed.push(singles.slice(-2));
+  }
+
+  return packed;
 }
 
 function placeWidgetInGrid(layout, dragged, mode) {
@@ -238,11 +259,11 @@ const weatherCentre = placeWidgetInGrid(stackedLayout, "weather", "wide-centre")
 assert.deepEqual(
   buildDashboardEntries(weatherCentre),
   [
-    { widget: "calendar", size: "tall" },
+    { widget: "calendar", size: "half" },
+    { widget: "spotify", size: "half" },
     { widget: "weather", size: "wide" },
-    { widget: "spotify", size: "tall" },
   ],
-  "centre grid drops make the dragged widget a 2/3 full-height widget without leaving stale wide sizes"
+  "centre grid drops keep the dragged widget wide while stacking its neighbours into the remaining column"
 );
 
 const weatherLeft = placeWidgetInGrid(stackedLayout, "weather", "third-left");
@@ -363,5 +384,21 @@ assert.deepEqual(
   ],
   "shrinking a 2/3 widget to 1/3 expands the neighbour to fill the remaining 2/3"
 );
+
+for (const visible of [
+  defaultOrder.slice(0, 4),
+  defaultOrder.slice(0, 5),
+  defaultOrder,
+]) {
+  const entries = buildDashboardEntries({
+    order: defaultOrder,
+    visible,
+    sizes: defaultSizes,
+    stacks: [],
+  });
+  const occupiedColumns = entries.reduce((total, entry) => total + (entry.size === "wide" ? 2 : entry.size === "full" ? 3 : entry.size === "tall" ? 1 : 0.5), 0);
+  assert.equal(occupiedColumns, 3, `${visible.length} widgets stay packed into the three-column dashboard`);
+  assert(entries.every((entry) => entry.size !== "wide"), `${visible.length} widgets do not retain a wide span that creates overflow`);
+}
 
 console.log("Drag layout mock checks passed");
