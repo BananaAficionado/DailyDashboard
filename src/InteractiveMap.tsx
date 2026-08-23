@@ -46,10 +46,12 @@ export function InteractiveMap({
   baseTileUrl = (tileZoom, x, y) => `https://tile.openstreetmap.org/${tileZoom}/${x}/${y}.png`,
   attribution = "© OpenStreetMap contributors",
   showControls = true,
+  showAttribution = true,
   interactive = true,
   onViewChange,
   onSelectPoint,
   onMonochromeChange,
+  onInteractionStart,
 }: {
   center: MapCenter;
   zoom: number;
@@ -63,10 +65,12 @@ export function InteractiveMap({
   baseTileUrl?: (zoom: number, x: number, y: number) => string;
   attribution?: string;
   showControls?: boolean;
+  showAttribution?: boolean;
   interactive?: boolean;
   onViewChange: (center: MapCenter, zoom: number) => void;
   onSelectPoint?: (id: string) => void;
   onMonochromeChange?: (value: boolean) => void;
+  onInteractionStart?: () => void;
 }) {
   const mapRef = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -145,6 +149,7 @@ export function InteractiveMap({
 
   function pointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (!interactive) return;
+    onInteractionStart?.();
     event.currentTarget.setPointerCapture(event.pointerId);
     updatePointer(event);
     if (pointers.current.size === 1) {
@@ -239,6 +244,7 @@ export function InteractiveMap({
       onLostPointerCapture={pointerUp}
       onWheel={(event) => {
         if (!interactive) return;
+        onInteractionStart?.();
         event.preventDefault();
         const element = event.currentTarget;
         const bounds = element.getBoundingClientRect();
@@ -312,7 +318,7 @@ export function InteractiveMap({
           >◐</button>
         ) : null}
       </div> : null}
-      <span className="map-attribution">{attribution}</span>
+      {showAttribution ? <span className="map-attribution">{attribution}</span> : null}
     </div>
   );
 }

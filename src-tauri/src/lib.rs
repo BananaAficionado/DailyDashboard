@@ -69,7 +69,9 @@ struct StoredSettings {
     idle_background: Option<String>,
     idle_map_location: Option<serde_json::Value>,
     idle_slideshow_folder: Option<String>,
+    idle_slideshow_fit: Option<String>,
     update_preference: Option<String>,
+    github_update_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -138,8 +140,8 @@ struct TokenResponse {
 
 #[derive(Debug, Deserialize)]
 struct GithubReleaseAsset {
+    url: String,
     name: String,
-    browser_download_url: String,
     digest: Option<String>,
 }
 
@@ -205,16 +207,36 @@ fn list_slideshow_images(folder: String) -> Result<Vec<String>, String> {
     if !folder.is_dir() {
         return Err("The selected album path is not a folder".into());
     }
-    let mut images = fs::read_dir(folder)
+    let mut images = Vec::new();
+    collect_slideshow_images(&folder, 0, &mut images)?;
+    images.sort_by_key(|path| path.to_lowercase());
+    Ok(images)
+}
+
+fn collect_slideshow_images(
+    folder: &std::path::Path,
+    depth: u8,
+    images: &mut Vec<String>,
+) -> Result<(), String> {
+    if depth > 3 || images.len() >= 500 {
+        return Ok(());
+    }
+    for entry in fs::read_dir(folder)
         .map_err(|err| err.to_string())?
         .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file() && slideshow_mime(path).is_some())
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    images.sort_by_key(|path| path.to_lowercase());
-    images.truncate(500);
-    Ok(images)
+    {
+        if images.len() >= 500 {
+            break;
+        }
+        let file_type = entry.file_type().map_err(|err| err.to_string())?;
+        let path = entry.path();
+        if file_type.is_dir() {
+            collect_slideshow_images(&path, depth + 1, images)?;
+        } else if file_type.is_file() && slideshow_mime(&path).is_some() {
+            images.push(path.to_string_lossy().into_owned());
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -251,17 +273,28 @@ fn slideshow_mime(path: &std::path::Path) -> Option<&'static str> {
 }
 
 #[tauri::command]
-async fn check_for_updates(current_version: String) -> Result<Option<AvailableUpdate>, String> {
-    let releases = reqwest::Client::builder()
+async fn check_for_updates(
+    current_version: String,
+    github_token: Option<String>,
+) -> Result<Option<AvailableUpdate>, String> {
+    let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("DailyDashboard-Updater/0.4")
+        .user_agent("DailyDashboard-Updater/0.4.1")
         .build()
-        .map_err(|err| err.to_string())?
+        .map_err(|err| err.to_string())?;
+    let mut request = client
         .get("https://api.github.com/repos/BananaAficionado/DailyDashboard/releases?per_page=30")
-        .header("Accept", "application/vnd.github+json")
+        .header("Accept", "application/vnd.github+json");
+    if let Some(token) = github_token.filter(|value| !value.trim().is_empty()) {
+        request = request.bearer_auth(token.trim());
+    }
+    let releases = request
         .send()
         .await
         .map_err(|err| format!("Could not check GitHub releases: {}", err))?;
+    if releases.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err("DailyDashboard is a private GitHub repository. Add a fine-grained GitHub token with Contents: read access in Settings, or check that the saved token can access BananaAficionado/DailyDashboard.".into());
+    }
     if !releases.status().is_success() {
         return Err(format!(
             "GitHub release check returned HTTP {}",
@@ -289,7 +322,7 @@ async fn check_for_updates(current_version: String) -> Result<Option<AvailableUp
             notes: release.body.unwrap_or_default(),
             release_url: release.html_url,
             asset_name: asset.map(|value| value.name.clone()),
-            asset_url: asset.map(|value| value.browser_download_url.clone()),
+            asset_url: asset.map(|value| value.url.clone()),
             asset_digest: asset.and_then(|value| value.digest.clone()),
             prerelease: release.prerelease,
         }
@@ -302,8 +335,10 @@ async fn download_update(
     asset_url: String,
     asset_name: String,
     asset_digest: Option<String>,
+    github_token: Option<String>,
 ) -> Result<DownloadedUpdate, String> {
-    let trusted_prefix = "https://github.com/BananaAficionado/DailyDashboard/releases/download/";
+    let trusted_prefix =
+        "https://api.github.com/repos/BananaAficionado/DailyDashboard/releases/assets/";
     if !asset_url.starts_with(trusted_prefix) {
         return Err(
             "The update asset does not belong to the DailyDashboard GitHub repository".into(),
@@ -316,15 +351,18 @@ async fn download_update(
     if safe_name != asset_name || !preferred_update_asset(safe_name) {
         return Err("Unsupported update asset".into());
     }
-    let response = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
-        .user_agent("DailyDashboard-Updater/0.4")
+        .user_agent("DailyDashboard-Updater/0.4.1")
         .build()
-        .map_err(|err| err.to_string())?
-        .get(asset_url)
-        .send()
-        .await
         .map_err(|err| err.to_string())?;
+    let mut request = client
+        .get(asset_url)
+        .header("Accept", "application/octet-stream");
+    if let Some(token) = github_token.filter(|value| !value.trim().is_empty()) {
+        request = request.bearer_auth(token.trim());
+    }
+    let response = request.send().await.map_err(|err| err.to_string())?;
     if !response.status().is_success() {
         return Err(format!(
             "Update download returned HTTP {}",
@@ -879,11 +917,34 @@ pub fn run() {
 
 #[cfg(test)]
 mod update_tests {
-    use super::compare_versions;
+    use super::{collect_slideshow_images, compare_versions};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
     #[test]
     fn compares_lettered_dashboard_versions() {
         assert!(compare_versions("V0.6B", "V0.6A").is_gt());
         assert!(compare_versions("V0.6", "V0.6B").is_gt());
         assert!(compare_versions("V0.5", "V0.4").is_gt());
+        assert!(compare_versions("V0.4.1", "V0.4").is_gt());
+    }
+
+    #[test]
+    fn discovers_images_in_album_subfolders() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("daily-dashboard-album-{unique}"));
+        let nested = root.join("trip").join("day-one");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(root.join("cover.jpg"), []).unwrap();
+        fs::write(nested.join("photo.png"), []).unwrap();
+        fs::write(nested.join("notes.txt"), []).unwrap();
+        let mut images = Vec::new();
+        collect_slideshow_images(&root, 0, &mut images).unwrap();
+        assert_eq!(images.len(), 2);
+        fs::remove_dir_all(root).unwrap();
     }
 }

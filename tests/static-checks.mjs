@@ -20,7 +20,7 @@ assert(
 assert(
   appSource.includes("onToggleFullscreen") &&
     appSource.includes("<strong>Application</strong>") &&
-    appSource.includes('const APP_VERSION = "V0.4"') &&
+    appSource.includes('const APP_VERSION = "V0.4.1"') &&
     appSource.includes("Version {APP_VERSION}") &&
     appSource.includes("Toggle Full Screen") &&
     cssSource.includes(".settings-action-button") &&
@@ -29,10 +29,10 @@ assert(
 );
 
 assert(
-  tauriConfig.version === "0.4.0" &&
-    tauriConfig.mainBinaryName === "V0.4_Daily-Dashboard" &&
+  tauriConfig.version === "0.4.1" &&
+    tauriConfig.mainBinaryName === "V0.4.1_Daily-Dashboard" &&
     tauriConfig.bundle.targets.includes("nsis"),
-  "release metadata is V0.4 with the prefixed main binary name"
+  "release metadata is V0.4.1 with the prefixed main binary name"
 );
 
 assert(
@@ -150,12 +150,27 @@ assert(
 );
 
 assert(
-  appSource.includes("IdleDashboard") && idleSource.includes('"fish"') && idleSource.includes('"reactive"') &&
+  appSource.includes("IdleDashboard") && idleSource.includes('"fish"') && idleSource.includes('"stars"') &&
     idleSource.includes('"topographic"') && idleSource.includes('"slideshow"') &&
     idleSource.includes("Orange roughy") && idleSource.includes("Blue cod") && idleSource.includes("Gemfish") &&
     idleSource.includes("Please select an album folder from the settings menu") &&
-    rustSource.includes("select_slideshow_folder") && rustSource.includes("read_slideshow_image"),
+    rustSource.includes("select_slideshow_folder") && rustSource.includes("read_slideshow_image") &&
+    rustSource.includes("collect_slideshow_images") && appSource.includes("await onSave(next)"),
   "no-widget screen offers all five persisted backgrounds and a native slideshow album folder"
+);
+
+assert(
+  idleSource.includes("localSiderealHours") && idleSource.includes("projectStar") &&
+    idleSource.includes("constellation-popup") && idleSource.includes("Orange roughy") &&
+    idleSource.includes("pixel-fish-food") && idleSource.includes('"seeking-food"') &&
+    idleSource.includes('behaviour = "circling-cursor"') && idleSource.includes("requestAnimationFrame(animate)") &&
+    idleSource.includes("constellation-hit-star") && cssSource.includes("stroke-width: 18") &&
+    idleSource.includes("World_Hillshade") && !idleSource.includes("World_Topo_Map") &&
+    idleSource.includes("nearby ridge") && idleSource.includes("creek valley") && idleSource.includes("trail country") &&
+    idleSource.includes("overpass-api.de/api/interpreter") && idleSource.includes('tags.route === "hiking"') &&
+    appSource.includes("Shrink to fit with blurred background") && rustSource.includes("idle_slideshow_fit") &&
+    cssSource.includes("slideshow-backdrop-drift"),
+  "ambient backgrounds include local constellation projection, interactive feeding fish, label-free hillshade, and both slideshow fit modes"
 );
 
 assert(
@@ -163,6 +178,12 @@ assert(
     appSource.includes("Install next reboot") && rustSource.includes("check_for_updates") && rustSource.includes("download_update") &&
     rustSource.includes("DailyDashboardUpdate") && rustSource.includes("compare_versions"),
   "GitHub release update assistant supports automatic, immediate, next-sign-in, and ignored update modes"
+);
+
+assert(
+  appSource.includes("githubUpdateToken") && rustSource.includes("github_token") &&
+    rustSource.includes("application/octet-stream") && rustSource.includes("private GitHub repository"),
+  "private GitHub releases use authenticated API checks and authenticated installer downloads"
 );
 
 assert(

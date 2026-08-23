@@ -33,7 +33,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { InteractiveMap, type MapPoint, type MapTrail, type MapTrailPoint } from "./InteractiveMap";
 import { expandIcalRecurrence, icalDateKey } from "./icalRecurrence";
 import { adsbAltitudeColor } from "./mapTiles";
-import { IdleDashboard, type IdleBackgroundKind } from "./IdleBackgrounds";
+import { IdleDashboard, type IdleBackgroundKind, type SlideshowFit } from "./IdleBackgrounds";
 
 type ViewMode = "week" | "day";
 type CalendarStyle = "google" | "outlook";
@@ -72,7 +72,9 @@ type StoredSettings = EnvConfig & {
   idleBackground?: IdleBackgroundKind;
   idleMapLocation?: WeatherLocation;
   idleSlideshowFolder?: string;
+  idleSlideshowFit?: SlideshowFit;
   updatePreference?: UpdatePreference;
+  githubUpdateToken?: string;
 };
 
 type WidgetId = "calendar" | "spotify" | "weather" | "aircraft" | "codex" | "terminal";
@@ -274,7 +276,7 @@ const DEFAULT_CODEX_OPEN_URL = "codex://threads/new";
 const DEFAULT_CODEX_WEB_URL = "https://chatgpt.com/codex";
 const DEFAULT_ADSB_API_URL = "https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{radius}";
 const APP_SCALES: AppScale[] = [75, 100, 125, 150, 200];
-const APP_VERSION = "V0.4";
+const APP_VERSION = "V0.4.1";
 const RAIL_HIDE_DELAY_MS = 3_000;
 const EMPTY_DASHBOARD_IDLE_DELAY_MS = 15_000;
 const featureFlag = (value: unknown, defaultEnabled = true) => {
@@ -1005,7 +1007,7 @@ function App() {
     }
   }
 
-  async function checkForUpdates(manual = true) {
+  async function checkForUpdates(manual = true, githubToken = settings.githubUpdateToken) {
     if (!isTauri()) {
       setUpdateStatus("Update checks are available in the installed app.");
       return;
@@ -1014,7 +1016,7 @@ function App() {
     setUpdateBusy(true);
     setUpdateStatus("Checking GitHub releases…");
     try {
-      const update = await invoke<AvailableUpdate | null>("check_for_updates", { currentVersion: APP_VERSION });
+      const update = await invoke<AvailableUpdate | null>("check_for_updates", { currentVersion: APP_VERSION, githubToken: githubToken?.trim() || null });
       setAvailableUpdate(update);
       if (!update) {
         setUpdateStatus(`${APP_VERSION} is up to date.`);
@@ -1036,7 +1038,7 @@ function App() {
     setUpdateBusy(true);
     setUpdateStatus(`Downloading ${update.version}…`);
     try {
-      const downloaded = await invoke<DownloadedUpdate>("download_update", { assetUrl: update.assetUrl, assetName: update.assetName, assetDigest: update.assetDigest });
+      const downloaded = await invoke<DownloadedUpdate>("download_update", { assetUrl: update.assetUrl, assetName: update.assetName, assetDigest: update.assetDigest, githubToken: settings.githubUpdateToken?.trim() || null });
       setDownloadedUpdate(downloaded);
       setUpdateStatus(`${update.version} is downloaded and verified.`);
       return downloaded;
@@ -1837,6 +1839,7 @@ function App() {
           kind={normalizeIdleBackground(settings.idleBackground)}
           location={settings.idleMapLocation || settings.weatherLocation}
           slideshowFolder={settings.idleSlideshowFolder}
+          slideshowFit={normalizeSlideshowFit(settings.idleSlideshowFit)}
           contentVisible={emptyDashboardContentVisible}
           onKindChange={(idleBackground) => saveSettings({ ...settings, idleBackground }).catch((err) => setError(String(err)))}
         /> : null}
@@ -2156,7 +2159,7 @@ function App() {
           downloadedUpdate={downloadedUpdate}
           updateStatus={updateStatus}
           updateBusy={updateBusy}
-          onCheckForUpdates={() => checkForUpdates(true)}
+          onCheckForUpdates={(githubToken) => checkForUpdates(true, githubToken)}
           onDownloadUpdate={() => downloadAvailableUpdate()}
           onInstallUpdate={(installOnReboot) => installDownloadedUpdate(undefined, installOnReboot)}
         />
@@ -2973,7 +2976,7 @@ function SetupOverlay({
   downloadedUpdate: DownloadedUpdate | null;
   updateStatus: string;
   updateBusy: boolean;
-  onCheckForUpdates: () => Promise<void>;
+  onCheckForUpdates: (githubToken?: string) => Promise<void>;
   onDownloadUpdate: () => Promise<DownloadedUpdate>;
   onInstallUpdate: (installOnReboot: boolean) => Promise<void>;
 }) {
@@ -3094,7 +3097,11 @@ function SetupOverlay({
   async function chooseSlideshowFolder() {
     try {
       const folder = await invoke<string | null>("select_slideshow_folder");
-      if (folder) setDraft({ ...draft, idleSlideshowFolder: folder });
+      if (folder) {
+        const next = { ...draft, idleSlideshowFolder: folder };
+        setDraft(next);
+        await onSave(next);
+      }
     } catch (err) {
       setIdleMapDraftError(`Could not open the folder picker: ${String(err)}`);
     }
@@ -3140,7 +3147,7 @@ function SetupOverlay({
               <select value={normalizeIdleBackground(draft.idleBackground)} onChange={(event) => setDraft({ ...draft, idleBackground: normalizeIdleBackground(event.target.value) })}>
                 <option value="waves">Waves (original)</option>
                 <option value="fish">Pixel fish pond</option>
-                <option value="reactive">Reactive sea</option>
+                <option value="stars">Location-aware night sky</option>
                 <option value="topographic">Panning topographic map</option>
                 <option value="slideshow">Album slideshow</option>
               </select>
@@ -3159,6 +3166,13 @@ function SetupOverlay({
               <div><span>Slideshow album folder</span><small>{draft.idleSlideshowFolder || "No folder selected"}</small></div>
               <button onClick={chooseSlideshowFolder}>Choose folder</button>
             </div>
+            <label>
+              <span>Slideshow image fit</span>
+              <select value={normalizeSlideshowFit(draft.idleSlideshowFit)} onChange={(event) => setDraft({ ...draft, idleSlideshowFit: normalizeSlideshowFit(event.target.value) })}>
+                <option value="crop">Crop to fit</option>
+                <option value="contain">Shrink to fit with blurred background</option>
+              </select>
+            </label>
             {idleMapDraftError ? <p className="error-line">{idleMapDraftError}</p> : null}
           </div>
           <div className="update-settings">
@@ -3171,8 +3185,12 @@ function SetupOverlay({
                 <option value="ignore">Ignore updates</option>
               </select>
             </label>
+            <label>
+              <span>GitHub update token <small>(required while the repository is private)</small></span>
+              <input type="password" value={draft.githubUpdateToken || ""} placeholder="Fine-grained token with Contents: read" onChange={(event) => setDraft({ ...draft, githubUpdateToken: event.target.value })} />
+            </label>
             <div className="update-actions">
-              <button disabled={updateBusy} onClick={() => onCheckForUpdates().catch((err) => setIdleMapDraftError(String(err)))}>Check now</button>
+              <button disabled={updateBusy} onClick={() => onSave(draft).then(() => onCheckForUpdates(draft.githubUpdateToken)).catch((err) => setIdleMapDraftError(String(err)))}>Check now</button>
               {availableUpdate && !downloadedUpdate ? <button disabled={updateBusy || !availableUpdate.assetUrl} onClick={() => onDownloadUpdate().catch((err) => setIdleMapDraftError(String(err)))}>Download {availableUpdate.version}</button> : null}
               {downloadedUpdate ? <button disabled={updateBusy} onClick={() => onInstallUpdate(false).catch((err) => setIdleMapDraftError(String(err)))}>Install now</button> : null}
               {downloadedUpdate ? <button disabled={updateBusy} onClick={() => onInstallUpdate(true).catch((err) => setIdleMapDraftError(String(err)))}>Install next reboot</button> : null}
@@ -3799,7 +3817,12 @@ function normalizeAppScale(value?: number): AppScale {
 }
 
 function normalizeIdleBackground(value?: string): IdleBackgroundKind {
-  return ["waves", "fish", "reactive", "topographic", "slideshow"].includes(value || "") ? value as IdleBackgroundKind : "waves";
+  if (value === "reactive") return "stars";
+  return ["waves", "fish", "stars", "topographic", "slideshow"].includes(value || "") ? value as IdleBackgroundKind : "waves";
+}
+
+function normalizeSlideshowFit(value?: string): SlideshowFit {
+  return value === "contain" ? "contain" : "crop";
 }
 
 function normalizeUpdatePreference(value?: string): UpdatePreference {
@@ -3836,7 +3859,9 @@ function normalizeSettings(settings: StoredSettings): StoredSettings {
     idleBackground: normalizeIdleBackground(settings.idleBackground),
     idleMapLocation: settings.idleMapLocation,
     idleSlideshowFolder: settings.idleSlideshowFolder?.trim(),
+    idleSlideshowFit: normalizeSlideshowFit(settings.idleSlideshowFit),
     updatePreference: normalizeUpdatePreference(settings.updatePreference),
+    githubUpdateToken: settings.githubUpdateToken?.trim(),
     widgetLayout: normalizeWidgetLayout(settings.widgetLayout),
     selectedCalendarIds: Array.isArray(settings.selectedCalendarIds)
       ? settings.selectedCalendarIds.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim())

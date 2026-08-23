@@ -1,6 +1,6 @@
 # Daily Dashboard
 
-Current release: **V0.4** (`0.4.0`).
+Current release: **V0.4.1** (`0.4.1`).
 
 A Tauri v2 desktop dashboard sized for a 1280 x 400 ultrawide display. It supports calendar, Spotify, weather, live ADS-B aircraft, Codex, and command-line widgets in a configurable layout; individual widgets can be omitted from a release build.
 
@@ -8,9 +8,11 @@ Release builds expose one Vite feature flag per widget: `VITE_FEATURE_WIDGET_CAL
 
 The Settings page includes full-application scaling at 75%, 100%, 125%, 150%, and 200% for small high-resolution displays. Scaling applies to the complete interface, including text, buttons, widgets, and Settings.
 
-When every widget is hidden, the idle screen offers five persistent backgrounds directly from its bottom selector: the original animated waves, a top-down pixel fish pond, a pointer-reactive sea of dots, an automatically panning topographic map, and an album slideshow. The topographic location and slideshow folder are configured in Settings. Album images are read locally and are never uploaded; supported formats are JPEG, PNG, WebP, GIF, and BMP.
+When every widget is hidden, the idle screen offers five persistent backgrounds directly from its bottom selector: the original animated waves, an interactive top-down pixel fish pond, a location-and-time-aware night sky, an automatically panning label-free elevation map, and an album slideshow. The night sky and elevation map use the dedicated map location, then fall back to the weather location. Album images are read locally and are never uploaded; supported formats are JPEG, PNG, WebP, GIF, and BMP. Slideshows can crop images to fill the screen or shrink them over a heavily blurred, slowly moving copy of the same image.
 
 Installed builds can check `BananaAficionado/DailyDashboard` GitHub Releases for newer versions. Settings provides ask-first, automatic download, automatic Windows installation, and fully ignored modes. A downloaded Windows installer can run immediately or be scheduled through the current user's `RunOnce` entry for the next sign-in. Version ordering supports lettered releases (`V0.6B` is newer than `V0.6A`, while a final `V0.6` is newer than both). Update downloads are restricted to this repository's release URLs and SHA-256 verified when GitHub supplies an asset digest.
+
+Because the repository is private, update checks require a fine-grained GitHub token with read access to this repository and `Contents: read`. Enter it under **Settings → Application updates**. The token is stored only in the dashboard's local settings file and is attached to GitHub API requests; it is never included in logs or release URLs. Public-repository update checks work without a token.
 
 The live aircraft widget defaults to the [ADSB.lol point/radius API](https://api.adsb.lol/) and refreshes every 10 seconds while visible. It supports mouse/touch panning, wheel/buttons/pinch zooming, device or searched locations, a saved manual map centre, selectable aircraft details, and graphic-only mode. An ADSB Exchange/RapidAPI-compatible URL template and key can be entered in Settings. URL templates use `{lat}`, `{lon}`, and `{radius}` placeholders.
 
@@ -123,7 +125,7 @@ Do not invoke `cargo xwin build` directly. The Tauri wrapper enables the product
 The executable is written to:
 
 ```text
-src-tauri/target/release/V0.4_Daily-Dashboard.exe
+src-tauri/target/release/V0.4.1_Daily-Dashboard.exe
 ```
 
 Copy the EXE to a user-writable folder or USB drive and run it directly. It does not need an installer or administrator rights. The target computer must already have the Microsoft Edge WebView2 Runtime, which is normally present on supported Windows 10 and Windows 11 systems. The portable build does not silently install missing runtimes.

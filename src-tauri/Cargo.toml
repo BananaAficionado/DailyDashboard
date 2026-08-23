@@ -1,6 +1,6 @@
 [package]
 name = "ultrawide-daily-dashboard"
-version = "0.4.0"
+version = "0.4.1"
 description = "A 1280x400 desktop dashboard for Google Calendar and Spotify."
 authors = ["BananaAficionado"]
 license = ""
