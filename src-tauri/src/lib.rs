@@ -279,7 +279,7 @@ async fn check_for_updates(
 ) -> Result<Option<AvailableUpdate>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("DailyDashboard-Updater/0.4.1")
+        .user_agent("DailyDashboard-Updater/0.4.2")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -353,7 +353,7 @@ async fn download_update(
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
-        .user_agent("DailyDashboard-Updater/0.4.1")
+        .user_agent("DailyDashboard-Updater/0.4.2")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -928,6 +928,7 @@ mod update_tests {
         assert!(compare_versions("V0.6", "V0.6B").is_gt());
         assert!(compare_versions("V0.5", "V0.4").is_gt());
         assert!(compare_versions("V0.4.1", "V0.4").is_gt());
+        assert!(compare_versions("V0.4.2", "V0.4.1").is_gt());
     }
 
     #[test]
