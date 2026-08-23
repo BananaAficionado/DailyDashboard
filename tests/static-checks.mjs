@@ -10,6 +10,7 @@ const htmlSource = await readFile(new URL("../index.html", import.meta.url), "ut
 const rustSource = await readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
 const capabilitiesSource = await readFile(new URL("../src-tauri/capabilities/default.json", import.meta.url), "utf8");
 const envExampleSource = await readFile(new URL("../.env.example", import.meta.url), "utf8");
+const installerHooksSource = await readFile(new URL("../src-tauri/installer-hooks.nsh", import.meta.url), "utf8");
 
 assert(
   capabilities.permissions.includes("core:window:allow-is-fullscreen") &&
@@ -20,7 +21,7 @@ assert(
 assert(
   appSource.includes("onToggleFullscreen") &&
     appSource.includes("<strong>Application</strong>") &&
-    appSource.includes('const APP_VERSION = "V0.4.1"') &&
+    appSource.includes('const APP_VERSION = "V0.4.2"') &&
     appSource.includes("Version {APP_VERSION}") &&
     appSource.includes("Toggle Full Screen") &&
     cssSource.includes(".settings-action-button") &&
@@ -29,10 +30,18 @@ assert(
 );
 
 assert(
-  tauriConfig.version === "0.4.1" &&
-    tauriConfig.mainBinaryName === "V0.4.1_Daily-Dashboard" &&
+  tauriConfig.version === "0.4.2" &&
+    tauriConfig.mainBinaryName === "V0.4.2_Daily-Dashboard" &&
+    tauriConfig.bundle.windows.nsis.installerHooks === "installer-hooks.nsh" &&
     tauriConfig.bundle.targets.includes("nsis"),
-  "release metadata is V0.4.1 with the prefixed main binary name"
+  "release metadata is V0.4.2 with the prefixed main binary name and NSIS hooks"
+);
+
+assert(
+  installerHooksSource.includes("NSIS_HOOK_POSTINSTALL") &&
+    installerHooksSource.includes("IfSilent") &&
+    installerHooksSource.includes('nsis_tauri_utils::RunAsUser "$INSTDIR\\${MAINBINARYNAME}.exe"'),
+  "silent Windows updates relaunch the newly installed executable after installation"
 );
 
 assert(

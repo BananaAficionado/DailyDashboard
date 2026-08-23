@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Daily Dashboard",
-  "mainBinaryName": "V0.4.1_Daily-Dashboard",
-  "version": "0.4.1",
+  "mainBinaryName": "V0.4.2_Daily-Dashboard",
+  "version": "0.4.2",
   "identifier": "com.bananaaficionado.daily-dashboard",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -43,7 +43,8 @@
       },
       "nsis": {
         "installerIcon": null,
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "installer-hooks.nsh"
       }
     }
   },
