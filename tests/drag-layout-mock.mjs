@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 
-const defaultOrder = ["calendar", "spotify", "weather", "aircraft", "codex", "terminal"];
+const defaultOrder = ["calendar", "clock", "spotify", "weather", "aircraft", "codex", "terminal"];
 const defaultSizes = {
   calendar: "wide",
+  clock: "tall",
   spotify: "half",
   weather: "half",
   aircraft: "tall",
@@ -385,10 +386,11 @@ assert.deepEqual(
   "shrinking a 2/3 widget to 1/3 expands the neighbour to fill the remaining 2/3"
 );
 
+const releaseEnabledOrder = defaultOrder.filter((widget) => widget !== "codex");
 for (const visible of [
-  defaultOrder.slice(0, 4),
-  defaultOrder.slice(0, 5),
-  defaultOrder,
+  releaseEnabledOrder.slice(0, 4),
+  releaseEnabledOrder.slice(0, 5),
+  releaseEnabledOrder,
 ]) {
   const entries = buildDashboardEntries({
     order: defaultOrder,

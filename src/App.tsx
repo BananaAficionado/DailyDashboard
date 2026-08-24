@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock3,
   CloudSun,
   ExternalLink,
   Grip,
@@ -34,6 +35,7 @@ import { InteractiveMap, type MapPoint, type MapTrail, type MapTrailPoint } from
 import { expandIcalRecurrence, icalDateKey } from "./icalRecurrence";
 import { adsbAltitudeColor } from "./mapTiles";
 import { IdleDashboard, type IdleBackgroundKind, type SlideshowFit } from "./IdleBackgrounds";
+import { ClockWidget, type ClockAgendaItem } from "./ClockWidget";
 
 type ViewMode = "week" | "day";
 type CalendarStyle = "google" | "outlook";
@@ -75,9 +77,10 @@ type StoredSettings = EnvConfig & {
   idleSlideshowFit?: SlideshowFit;
   updatePreference?: UpdatePreference;
   githubUpdateToken?: string;
+  clockTimeZone?: string;
 };
 
-type WidgetId = "calendar" | "spotify" | "weather" | "aircraft" | "codex" | "terminal";
+type WidgetId = "calendar" | "clock" | "spotify" | "weather" | "aircraft" | "codex" | "terminal";
 type AppScale = 75 | 100 | 125 | 150 | 200;
 type UpdatePreference = "notify" | "auto-download" | "auto-install" | "ignore";
 type AvailableUpdate = { version: string; name: string; notes: string; releaseUrl: string; assetName?: string; assetUrl?: string; assetDigest?: string; prerelease: boolean };
@@ -276,7 +279,7 @@ const DEFAULT_CODEX_OPEN_URL = "codex://threads/new";
 const DEFAULT_CODEX_WEB_URL = "https://chatgpt.com/codex";
 const DEFAULT_ADSB_API_URL = "https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{radius}";
 const APP_SCALES: AppScale[] = [75, 100, 125, 150, 200];
-const APP_VERSION = "V0.4.2";
+const APP_VERSION = "V0.4.3";
 const RAIL_HIDE_DELAY_MS = 3_000;
 const EMPTY_DASHBOARD_IDLE_DELAY_MS = 15_000;
 const featureFlag = (value: unknown, defaultEnabled = true) => {
@@ -285,6 +288,7 @@ const featureFlag = (value: unknown, defaultEnabled = true) => {
 };
 const WIDGET_FEATURE_FLAGS: Record<WidgetId, boolean> = {
   calendar: featureFlag(import.meta.env.VITE_FEATURE_WIDGET_CALENDAR),
+  clock: featureFlag(import.meta.env.VITE_FEATURE_WIDGET_CLOCK),
   spotify: featureFlag(import.meta.env.VITE_FEATURE_WIDGET_SPOTIFY),
   weather: featureFlag(import.meta.env.VITE_FEATURE_WIDGET_WEATHER),
   aircraft: featureFlag(import.meta.env.VITE_FEATURE_WIDGET_AIRCRAFT),
@@ -293,6 +297,7 @@ const WIDGET_FEATURE_FLAGS: Record<WidgetId, boolean> = {
 };
 const DEFAULT_WIDGET_SIZES: Record<WidgetId, WidgetSize> = {
   calendar: "wide",
+  clock: "tall",
   spotify: "half",
   weather: "half",
   aircraft: "tall",
@@ -301,7 +306,7 @@ const DEFAULT_WIDGET_SIZES: Record<WidgetId, WidgetSize> = {
 };
 const DEFAULT_WIDGET_LAYOUT: WidgetLayout = {
   mode: "thirds",
-  order: ["calendar", "spotify", "weather", "aircraft", "codex", "terminal"],
+  order: ["calendar", "clock", "spotify", "weather", "aircraft", "codex", "terminal"],
   visible: ["calendar", "spotify", "weather"],
   thirdsStacked: true,
   sizes: DEFAULT_WIDGET_SIZES,
@@ -364,6 +369,7 @@ function App() {
   const [emptyDashboardContentVisible, setEmptyDashboardContentVisible] = useState(true);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
+  const [previousRelease, setPreviousRelease] = useState<AvailableUpdate | null>(null);
   const [downloadedUpdate, setDownloadedUpdate] = useState<DownloadedUpdate | null>(null);
   const [updateStatus, setUpdateStatus] = useState("");
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -514,11 +520,12 @@ function App() {
           const mockParams = new URLSearchParams(window.location.search);
           const mockScale = normalizeAppScale(Number(mockParams.get("scale")));
           const mockEmpty = mockParams.has("empty");
+          const mockClockSize = isWidgetSize(mockParams.get("clockSize")) ? mockParams.get("clockSize") as WidgetSize : null;
           setSettings({
             calendarId: "primary",
             appScale: mockScale,
             weatherLocation: mockWeatherLocation(),
-            widgetLayout: mockEmpty ? { ...DEFAULT_WIDGET_LAYOUT, visible: [], stacks: [] } : mockCalendarTall ? {
+            widgetLayout: mockEmpty ? { ...DEFAULT_WIDGET_LAYOUT, visible: [], stacks: [] } : mockClockSize ? mockClockWidgetLayout(mockClockSize) : mockCalendarTall ? {
               ...DEFAULT_WIDGET_LAYOUT,
               sizes: { ...DEFAULT_WIDGET_SIZES, calendar: "tall", spotify: "tall", weather: "tall" },
               stacks: [],
@@ -1042,6 +1049,40 @@ function App() {
       setDownloadedUpdate(downloaded);
       setUpdateStatus(`${update.version} is downloaded and verified.`);
       return downloaded;
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function checkForRollback(githubToken = settings.githubUpdateToken) {
+    if (!isTauri()) {
+      setUpdateStatus("Rollback checks are available in the installed app.");
+      return;
+    }
+    setUpdateBusy(true);
+    setUpdateStatus("Finding the previous stable release…");
+    try {
+      const release = await invoke<AvailableUpdate | null>("check_for_rollback", { currentVersion: APP_VERSION, githubToken: githubToken?.trim() || null });
+      setPreviousRelease(release);
+      setUpdateStatus(release ? `${release.version} is available to restore.` : "No earlier installable release was found.");
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function rollbackToPreviousRelease() {
+    if (!previousRelease?.assetUrl || !previousRelease.assetName) throw new Error("Find a previous release before rolling back.");
+    setUpdateBusy(true);
+    setUpdateStatus(`Downloading and verifying ${previousRelease.version}…`);
+    try {
+      const downloaded = await invoke<DownloadedUpdate>("download_update", {
+        assetUrl: previousRelease.assetUrl,
+        assetName: previousRelease.assetName,
+        assetDigest: previousRelease.assetDigest,
+        githubToken: settings.githubUpdateToken?.trim() || null,
+      });
+      setUpdateStatus(`Restoring ${previousRelease.version}…`);
+      await invoke("install_update", { path: downloaded.path, installOnReboot: false });
     } finally {
       setUpdateBusy(false);
     }
@@ -1700,6 +1741,13 @@ function App() {
       .filter(({ startsAt }) => startsAt >= nowMs && startsAt - nowMs <= 5 * 60_000)
       .sort((a, b) => a.startsAt - b.startsAt)[0]?.event || null;
   }, [dismissedReminderIds, events, now]);
+  const clockAgenda = useMemo<ClockAgendaItem[]>(() => events.map((event) => ({
+    id: event.id,
+    title: event.summary || "Untitled event",
+    startDate: event.start.date,
+    startDateTime: event.start.dateTime,
+    color: event.calendarColor,
+  })), [events]);
   const renderCalendarSourceGroup = (key: "my" | "other", title: string, group: CalendarSource[]) => {
     if (!group.length) {
       return null;
@@ -1763,6 +1811,9 @@ function App() {
       >
         {WIDGET_FEATURE_FLAGS.calendar ? <button className={`rail-button ${railWidgetActive("calendar") ? "active" : ""}`} title="Calendar" onClick={() => toggleWidget("calendar")}>
           <CalendarDays size={20} />
+        </button> : null}
+        {WIDGET_FEATURE_FLAGS.clock ? <button className={`rail-button ${railWidgetActive("clock") ? "active" : ""}`} title="Clock" onClick={() => toggleWidget("clock")}>
+          <Clock3 size={20} />
         </button> : null}
         {WIDGET_FEATURE_FLAGS.spotify ? <button className={`rail-button ${railWidgetActive("spotify") ? "active" : ""}`} title="Spotify" onClick={() => toggleWidget("spotify")}>
           <ListMusic size={20} />
@@ -1916,7 +1967,15 @@ function App() {
                 </button>
               </div>
             ) : null}
-            {widget === "calendar" ? (
+            {widget === "clock" ? (
+              <ClockWidget
+                size={widgetSize("clock")}
+                timeZone={normalizeClockTimeZone(settings.clockTimeZone)}
+                agenda={clockAgenda}
+                onTimeZoneChange={(clockTimeZone) => saveSettings({ ...settings, clockTimeZone }).catch((err) => setError(String(err)))}
+                onClose={() => hideWidget("clock")}
+              />
+            ) : widget === "calendar" ? (
               <section className={`calendar-panel calendar-widget-size-${widgetSize(widget)} calendar-style-${calendarStyle}`}>
                 <header className="topbar">
                   <div className="brand">
@@ -2156,12 +2215,15 @@ function App() {
           onOpenCodex={() => openCodexWindow().catch((err) => setError(String(err)))}
           onToggleFullscreen={() => toggleFullscreen().catch((err) => setError(String(err)))}
           availableUpdate={availableUpdate}
+          previousRelease={previousRelease}
           downloadedUpdate={downloadedUpdate}
           updateStatus={updateStatus}
           updateBusy={updateBusy}
           onCheckForUpdates={(githubToken) => checkForUpdates(true, githubToken)}
           onDownloadUpdate={() => downloadAvailableUpdate()}
           onInstallUpdate={(installOnReboot) => installDownloadedUpdate(undefined, installOnReboot)}
+          onCheckForRollback={(githubToken) => checkForRollback(githubToken)}
+          onRollback={() => rollbackToPreviousRelease()}
         />
       ) : null}
       {upcomingReminder ? (
@@ -2945,12 +3007,15 @@ function SetupOverlay({
   onOpenCodex,
   onToggleFullscreen,
   availableUpdate,
+  previousRelease,
   downloadedUpdate,
   updateStatus,
   updateBusy,
   onCheckForUpdates,
   onDownloadUpdate,
   onInstallUpdate,
+  onCheckForRollback,
+  onRollback,
 }: {
   settings: StoredSettings;
   env: EnvConfig;
@@ -2973,12 +3038,15 @@ function SetupOverlay({
   onOpenCodex: () => void;
   onToggleFullscreen: () => void;
   availableUpdate: AvailableUpdate | null;
+  previousRelease: AvailableUpdate | null;
   downloadedUpdate: DownloadedUpdate | null;
   updateStatus: string;
   updateBusy: boolean;
   onCheckForUpdates: (githubToken?: string) => Promise<void>;
   onDownloadUpdate: () => Promise<DownloadedUpdate>;
   onInstallUpdate: (installOnReboot: boolean) => Promise<void>;
+  onCheckForRollback: (githubToken?: string) => Promise<void>;
+  onRollback: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState<StoredSettings>({
     calendarId: "primary",
@@ -3197,6 +3265,22 @@ function SetupOverlay({
             </div>
             {updateStatus ? <small className="update-status">{updateStatus}</small> : null}
             {availableUpdate?.notes ? <details><summary>What’s new in {availableUpdate.version}</summary><p>{availableUpdate.notes.slice(0, 1200)}</p></details> : null}
+            <div className="rollback-settings">
+              <div>
+                <strong>Rollback</strong>
+                <small>Restore the immediately previous stable release. Your dashboard settings are retained.</small>
+              </div>
+              <div className="update-actions">
+                <button disabled={updateBusy} onClick={() => onSave(draft).then(() => onCheckForRollback(draft.githubUpdateToken)).catch((err) => setIdleMapDraftError(String(err)))}>
+                  {previousRelease ? "Refresh previous release" : "Find previous release"}
+                </button>
+                {previousRelease ? (
+                  <button className="rollback-button" disabled={updateBusy || !previousRelease.assetUrl} onClick={() => onRollback().catch((err) => setIdleMapDraftError(String(err)))}>
+                    Rollback to {previousRelease.version}
+                  </button>
+                ) : null}
+              </div>
+            </div>
           </div>
         </section>
         {WIDGET_FEATURE_FLAGS.calendar ? <section className="settings-section calendar-settings-group">
@@ -3829,6 +3913,16 @@ function normalizeUpdatePreference(value?: string): UpdatePreference {
   return ["notify", "auto-download", "auto-install", "ignore"].includes(value || "") ? value as UpdatePreference : "notify";
 }
 
+function normalizeClockTimeZone(value?: string) {
+  if (!value || value === "system") return "system";
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: value }).format();
+    return value;
+  } catch {
+    return "system";
+  }
+}
+
 function normalizeSettings(settings: StoredSettings): StoredSettings {
   return {
     ...settings,
@@ -3862,6 +3956,7 @@ function normalizeSettings(settings: StoredSettings): StoredSettings {
     idleSlideshowFit: normalizeSlideshowFit(settings.idleSlideshowFit),
     updatePreference: normalizeUpdatePreference(settings.updatePreference),
     githubUpdateToken: settings.githubUpdateToken?.trim(),
+    clockTimeZone: normalizeClockTimeZone(settings.clockTimeZone),
     widgetLayout: normalizeWidgetLayout(settings.widgetLayout),
     selectedCalendarIds: Array.isArray(settings.selectedCalendarIds)
       ? settings.selectedCalendarIds.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim())
@@ -3965,6 +4060,14 @@ function buildDashboardEntries(layout: WidgetLayout): DashboardEntry[] {
       ? stackedEntries(group, index + 1)
       : [singleEntry(group[0], "tall", index + 1)]
   ));
+}
+
+function mockClockWidgetLayout(size: WidgetSize): WidgetLayout {
+  const order: WidgetId[] = ["clock", "calendar", "weather", ...DEFAULT_WIDGET_LAYOUT.order.filter((widget) => widget !== "clock" && widget !== "calendar" && widget !== "weather")];
+  if (size === "full") return { ...DEFAULT_WIDGET_LAYOUT, order, visible: ["clock"], sizes: { ...DEFAULT_WIDGET_SIZES, clock: "full" }, stacks: [] };
+  if (size === "wide") return { ...DEFAULT_WIDGET_LAYOUT, order, visible: ["clock", "weather"], sizes: { ...DEFAULT_WIDGET_SIZES, clock: "wide", weather: "tall" }, stacks: [] };
+  if (size === "tall") return { ...DEFAULT_WIDGET_LAYOUT, order, visible: ["clock", "calendar"], sizes: { ...DEFAULT_WIDGET_SIZES, clock: "tall", calendar: "wide" }, stacks: [] };
+  return { ...DEFAULT_WIDGET_LAYOUT, order, visible: ["clock", "weather", "calendar"], sizes: { ...DEFAULT_WIDGET_SIZES, clock: "half", weather: "half", calendar: "wide" }, stacks: [["clock", "weather"]] };
 }
 
 function addWidgetToLayout(layout: WidgetLayout, widget: WidgetId): WidgetLayout {
@@ -4125,7 +4228,7 @@ function packWidgetStacks(
 }
 
 function isWidgetId(value: unknown): value is WidgetId {
-  return value === "calendar" || value === "spotify" || value === "weather" || value === "aircraft" || value === "codex" || value === "terminal";
+  return value === "calendar" || value === "clock" || value === "spotify" || value === "weather" || value === "aircraft" || value === "codex" || value === "terminal";
 }
 
 function isEnabledWidgetId(value: unknown): value is WidgetId {
@@ -4139,6 +4242,9 @@ function isWidgetSize(value: unknown): value is WidgetSize {
 function widgetLabel(widget: WidgetId) {
   if (widget === "calendar") {
     return "Calendar";
+  }
+  if (widget === "clock") {
+    return "Clock";
   }
   if (widget === "spotify") {
     return "Spotify";

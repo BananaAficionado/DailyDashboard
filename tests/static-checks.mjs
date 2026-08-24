@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 const capabilities = JSON.parse(await readFile(new URL("../src-tauri/capabilities/default.json", import.meta.url), "utf8"));
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+const clockSource = await readFile(new URL("../src/ClockWidget.tsx", import.meta.url), "utf8");
 const idleSource = await readFile(new URL("../src/IdleBackgrounds.tsx", import.meta.url), "utf8");
 const mapSource = await readFile(new URL("../src/InteractiveMap.tsx", import.meta.url), "utf8");
 const cssSource = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
@@ -21,7 +22,7 @@ assert(
 assert(
   appSource.includes("onToggleFullscreen") &&
     appSource.includes("<strong>Application</strong>") &&
-    appSource.includes('const APP_VERSION = "V0.4.2"') &&
+    appSource.includes('const APP_VERSION = "V0.4.3"') &&
     appSource.includes("Version {APP_VERSION}") &&
     appSource.includes("Toggle Full Screen") &&
     cssSource.includes(".settings-action-button") &&
@@ -30,11 +31,11 @@ assert(
 );
 
 assert(
-  tauriConfig.version === "0.4.2" &&
-    tauriConfig.mainBinaryName === "V0.4.2_Daily-Dashboard" &&
+  tauriConfig.version === "0.4.3" &&
+    tauriConfig.mainBinaryName === "V0.4.3_Daily-Dashboard" &&
     tauriConfig.bundle.windows.nsis.installerHooks === "installer-hooks.nsh" &&
     tauriConfig.bundle.targets.includes("nsis"),
-  "release metadata is V0.4.2 with the prefixed main binary name and NSIS hooks"
+  "release metadata is V0.4.3 with the prefixed main binary name and NSIS hooks"
 );
 
 assert(
@@ -45,8 +46,16 @@ assert(
 );
 
 assert(
-  !appSource.includes("Clock3") && !appSource.includes('title="Today agenda"'),
-  "clock agenda button has been removed from the component rail"
+  appSource.includes('title="Clock"') &&
+    appSource.includes('widget === "clock"') &&
+    clockSource.includes("AnalogClock") &&
+    clockSource.includes("DigitalClock") &&
+    clockSource.includes("ClockAgenda") &&
+    clockSource.includes("setInterval(tick, 100)") &&
+    clockSource.includes('timeZone === "system"') &&
+    cssSource.includes(".second-hand") &&
+    cssSource.includes(".clock-widget-full .clock-widget-body"),
+  "clock widget has accurate analog seconds, in-widget timezones, digital wide layouts, and responsive daily agenda modes"
 );
 
 assert(
@@ -66,7 +75,7 @@ assert(
   appSource.includes("dashboardWidgets") &&
     appSource.includes("dashboard-grid") &&
     appSource.includes("DEFAULT_WIDGET_LAYOUT") &&
-    appSource.includes("order: [\"calendar\", \"spotify\", \"weather\", \"aircraft\", \"codex\", \"terminal\"]") &&
+    appSource.includes("order: [\"calendar\", \"clock\", \"spotify\", \"weather\", \"aircraft\", \"codex\", \"terminal\"]") &&
     appSource.includes("visible: [\"calendar\", \"spotify\", \"weather\"]") &&
     appSource.includes("stacks: [[\"spotify\", \"weather\"]]") &&
     appSource.includes("buildDashboardEntries") &&
@@ -95,6 +104,7 @@ assert(
 assert(
   appSource.includes("WIDGET_FEATURE_FLAGS") &&
     appSource.includes("VITE_FEATURE_WIDGET_CALENDAR") &&
+    appSource.includes("VITE_FEATURE_WIDGET_CLOCK") &&
     appSource.includes("VITE_FEATURE_WIDGET_SPOTIFY") &&
     appSource.includes("VITE_FEATURE_WIDGET_WEATHER") &&
     appSource.includes("VITE_FEATURE_WIDGET_AIRCRAFT") &&
@@ -104,6 +114,17 @@ assert(
     appSource.includes("WIDGET_FEATURE_FLAGS.codex ? <section") &&
     envExampleSource.includes("VITE_FEATURE_WIDGET_CODEX=false"),
   "every widget has a release flag and Codex defaults off in layouts, the rail, and Settings"
+);
+
+assert(
+  appSource.includes("checkForRollback") &&
+    appSource.includes("rollbackToPreviousRelease") &&
+    appSource.includes("Rollback to {previousRelease.version}") &&
+    rustSource.includes("async fn check_for_rollback") &&
+    rustSource.includes("compare_versions(&release.tag_name, &current_version).is_lt()") &&
+    rustSource.includes("any(|asset| preferred_update_asset(&asset.name))") &&
+    rustSource.includes("check_for_rollback,"),
+  "settings can locate, verify, and reinstall the immediately previous stable GitHub release"
 );
 
 assert(

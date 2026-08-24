@@ -82,8 +82,19 @@ try {
   await evaluate(cdp, `(() => { const pond = document.querySelector('.pixel-fish-pond'); const bounds = pond.getBoundingClientRect(); pond.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: bounds.left + bounds.width * .62, clientY: bounds.top + bounds.height * .42 })); })()`);
   await delay(350);
   await assertEval(cdp, "new Set([...document.querySelectorAll('.pixel-fish-lane')].map(fish => fish.style.transform)).size === 9 && [...document.querySelectorAll('.pixel-fish-lane')].every(fish => ['seeking-cursor','circling-cursor'].includes(fish.dataset.behaviour))", "each fish independently steers toward or circles the cursor");
-  await evaluate(cdp, `(() => { const pond = document.querySelector('.pixel-fish-pond'); const bounds = pond.getBoundingClientRect(); const fish = document.querySelector('.pixel-fish-lane').getBoundingClientRect(); pond.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7, clientX: Math.min(bounds.right - 30, fish.right + 90), clientY: Math.min(bounds.bottom - 30, fish.top + fish.height / 2) })); })()`);
-  await delay(80);
+  await evaluate(cdp, `(() => {
+    const pond = document.querySelector('.pixel-fish-pond');
+    const bounds = pond.getBoundingClientRect();
+    const fish = [...document.querySelectorAll('.pixel-fish-lane')].map(node => { const rect = node.getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; });
+    const origin = fish[0];
+    const candidates = Array.from({ length: 16 }, (_, index) => {
+      const angle = index / 16 * Math.PI * 2;
+      return { x: Math.max(bounds.left + 35, Math.min(bounds.right - 35, origin.x + Math.cos(angle) * 78)), y: Math.max(bounds.top + 35, Math.min(bounds.bottom - 35, origin.y + Math.sin(angle) * 78)) };
+    });
+    const target = candidates.sort((a, b) => Math.min(...fish.map(item => Math.hypot(item.x - b.x, item.y - b.y))) - Math.min(...fish.map(item => Math.hypot(item.x - a.x, item.y - a.y))))[0];
+    pond.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7, clientX: target.x, clientY: target.y }));
+  })()`);
+  await delay(20);
   await assertEval(cdp, "document.querySelectorAll('.pixel-fish-food i').length === 7 && [...document.querySelectorAll('.pixel-fish-lane')].some(fish => fish.dataset.behaviour === 'seeking-food')", "fish food is placed and takes priority over the cursor");
   await delay(3200);
   await assertEval(cdp, "document.querySelectorAll('.pixel-fish-food').length === 0", "a fish reaches and eats the food");
