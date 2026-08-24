@@ -35,7 +35,7 @@ try {
   await delay(1200);
 
   await assertEval(cdp, "!document.querySelector('.setup-backdrop')", "mock mode should render dashboard without setup overlay");
-  await assertEval(cdp, "!document.querySelector('.rail-button[title=\"Today agenda\"]')", "left rail should not include the clock agenda component");
+  await assertEval(cdp, "Boolean(document.querySelector('.rail-button[title=\"Clock\"]'))", "left rail includes the new responsive clock widget");
   await assertEval(cdp, "[...document.querySelectorAll('.time-label')].map((node) => node.textContent).includes('6 PM')", "calendar default range includes 6 PM");
   await assertEval(cdp, "document.querySelector('.time-grid').getBoundingClientRect().height >= 528", "calendar default range spans 8 AM through 6 PM");
   await assertEval(cdp, "(() => { const title = [...document.querySelectorAll('.timed-event strong')].find((node) => node.textContent === 'Project Sync'); if (!title) return false; const event = title.closest('.timed-event'); const detail = event.querySelector('span'); const eventRect = event.getBoundingClientRect(); return event.classList.contains('short') && eventRect.height >= 36 && title.getBoundingClientRect().width > 34 && detail.getBoundingClientRect().width > 34; })()", "30-minute calendar meetings show readable title and detail text");

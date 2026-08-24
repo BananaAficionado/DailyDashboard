@@ -72,6 +72,7 @@ struct StoredSettings {
     idle_slideshow_fit: Option<String>,
     update_preference: Option<String>,
     github_update_token: Option<String>,
+    clock_time_zone: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -279,7 +280,7 @@ async fn check_for_updates(
 ) -> Result<Option<AvailableUpdate>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("DailyDashboard-Updater/0.4.2")
+        .user_agent("DailyDashboard-Updater/0.4.3")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -330,6 +331,69 @@ async fn check_for_updates(
 }
 
 #[tauri::command]
+async fn check_for_rollback(
+    current_version: String,
+    github_token: Option<String>,
+) -> Result<Option<AvailableUpdate>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .user_agent("DailyDashboard-Updater/0.4.3")
+        .build()
+        .map_err(|err| err.to_string())?;
+    let mut request = client
+        .get("https://api.github.com/repos/BananaAficionado/DailyDashboard/releases?per_page=30")
+        .header("Accept", "application/vnd.github+json");
+    if let Some(token) = github_token.filter(|value| !value.trim().is_empty()) {
+        request = request.bearer_auth(token.trim());
+    }
+    let releases = request
+        .send()
+        .await
+        .map_err(|err| format!("Could not check GitHub releases: {}", err))?;
+    if releases.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err("DailyDashboard is a private GitHub repository. Add a fine-grained GitHub token with Contents: read access in Settings before rolling back.".into());
+    }
+    if !releases.status().is_success() {
+        return Err(format!(
+            "GitHub rollback check returned HTTP {}",
+            releases.status()
+        ));
+    }
+    let releases = releases
+        .json::<Vec<GithubRelease>>()
+        .await
+        .map_err(|err| err.to_string())?;
+    let previous = releases
+        .into_iter()
+        .filter(|release| {
+            !release.draft
+                && !release.prerelease
+                && compare_versions(&release.tag_name, &current_version).is_lt()
+                && release
+                    .assets
+                    .iter()
+                    .any(|asset| preferred_update_asset(&asset.name))
+        })
+        .max_by(|a, b| compare_versions(&a.tag_name, &b.tag_name));
+    Ok(previous.map(|release| {
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| preferred_update_asset(&asset.name));
+        AvailableUpdate {
+            version: release.tag_name.clone(),
+            name: release.name.unwrap_or_else(|| release.tag_name.clone()),
+            notes: release.body.unwrap_or_default(),
+            release_url: release.html_url,
+            asset_name: asset.map(|value| value.name.clone()),
+            asset_url: asset.map(|value| value.url.clone()),
+            asset_digest: asset.and_then(|value| value.digest.clone()),
+            prerelease: release.prerelease,
+        }
+    }))
+}
+
+#[tauri::command]
 async fn download_update(
     app: AppHandle,
     asset_url: String,
@@ -353,7 +417,7 @@ async fn download_update(
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
-        .user_agent("DailyDashboard-Updater/0.4.2")
+        .user_agent("DailyDashboard-Updater/0.4.3")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -901,6 +965,7 @@ pub fn run() {
             list_slideshow_images,
             read_slideshow_image,
             check_for_updates,
+            check_for_rollback,
             download_update,
             install_update,
             start_oauth_listener,
@@ -929,6 +994,7 @@ mod update_tests {
         assert!(compare_versions("V0.5", "V0.4").is_gt());
         assert!(compare_versions("V0.4.1", "V0.4").is_gt());
         assert!(compare_versions("V0.4.2", "V0.4.1").is_gt());
+        assert!(compare_versions("V0.4.3", "V0.4.2").is_gt());
     }
 
     #[test]
