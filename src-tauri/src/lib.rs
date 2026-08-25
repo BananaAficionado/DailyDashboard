@@ -73,6 +73,7 @@ struct StoredSettings {
     update_preference: Option<String>,
     github_update_token: Option<String>,
     clock_time_zone: Option<String>,
+    clock_face_mode: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -280,7 +281,7 @@ async fn check_for_updates(
 ) -> Result<Option<AvailableUpdate>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("DailyDashboard-Updater/0.4.3")
+        .user_agent("DailyDashboard-Updater/0.4.4B")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -337,7 +338,7 @@ async fn check_for_rollback(
 ) -> Result<Option<AvailableUpdate>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("DailyDashboard-Updater/0.4.3")
+        .user_agent("DailyDashboard-Updater/0.4.4B")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -368,7 +369,7 @@ async fn check_for_rollback(
         .filter(|release| {
             !release.draft
                 && !release.prerelease
-                && compare_versions(&release.tag_name, &current_version).is_lt()
+                && compare_numeric_versions(&release.tag_name, &current_version).is_lt()
                 && release
                     .assets
                     .iter()
@@ -417,7 +418,7 @@ async fn download_update(
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
-        .user_agent("DailyDashboard-Updater/0.4.3")
+        .user_agent("DailyDashboard-Updater/0.4.4B")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -530,6 +531,10 @@ fn preferred_update_asset(name: &str) -> bool {
 
 fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
     version_key(left).cmp(&version_key(right))
+}
+
+fn compare_numeric_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    version_key(left).0.cmp(&version_key(right).0)
 }
 
 fn version_key(value: &str) -> (Vec<u32>, u32) {
@@ -982,7 +987,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod update_tests {
-    use super::{collect_slideshow_images, compare_versions};
+    use super::{collect_slideshow_images, compare_numeric_versions, compare_versions};
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
@@ -995,6 +1000,9 @@ mod update_tests {
         assert!(compare_versions("V0.4.1", "V0.4").is_gt());
         assert!(compare_versions("V0.4.2", "V0.4.1").is_gt());
         assert!(compare_versions("V0.4.3", "V0.4.2").is_gt());
+        assert!(compare_versions("V0.4.4B", "V0.4.4A").is_gt());
+        assert!(compare_numeric_versions("V0.4.4A", "V0.4.4B").is_eq());
+        assert!(compare_numeric_versions("V0.4.3", "V0.4.4B").is_lt());
     }
 
     #[test]

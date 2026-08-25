@@ -936,6 +936,10 @@ button {
 .clock-zone-button svg { flex: 0 0 auto; transition: transform 160ms ease; }
 .clock-zone-button[aria-expanded="true"] svg { transform: rotate(180deg); }
 
+.clock-face-toggle { display: flex; flex: 0 0 auto; padding: 2px; border: 1px solid #3b4048; border-radius: 15px; background: #202329; }
+.clock-face-toggle button { width: 25px; height: 24px; padding: 0; border: 0; border-radius: 12px; color: #9ca3af; background: transparent; font-size: 10px; font-weight: 750; }
+.clock-face-toggle button.active { color: #11151a; background: #9dc1ff; }
+
 .clock-zone-popover {
   position: absolute;
   top: 42px;
@@ -943,6 +947,7 @@ button {
   z-index: 8;
   display: grid;
   width: min(230px, calc(100% - 20px));
+  max-height: calc(100% - 52px);
   gap: 5px;
   padding: 10px;
   border: 1px solid #484e59;
@@ -951,8 +956,11 @@ button {
   box-shadow: 0 15px 38px rgba(0, 0, 0, .48);
 }
 
-.clock-zone-popover label { color: #aeb4be; font-size: 10px; text-transform: uppercase; letter-spacing: .12em; }
-.clock-zone-popover select { width: 100%; min-width: 0; height: 31px; padding: 0 8px; border: 1px solid #555c68; border-radius: 5px; color: #f5f6f8; background: #252930; }
+.clock-zone-popover > span { color: #aeb4be; font-size: 10px; text-transform: uppercase; letter-spacing: .12em; }
+.clock-zone-options { display: grid; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.clock-zone-options button { min-height: 30px; padding: 5px 9px; border: 0; border-radius: 5px; color: #d9dde4; background: transparent; text-align: left; font-size: 11px; }
+.clock-zone-options button:hover { background: #353a43; }
+.clock-zone-options button.selected { color: #11151a; background: #9dc1ff; font-weight: 700; }
 
 .clock-widget-body {
   display: grid;
@@ -965,6 +973,7 @@ button {
 
 .clock-analog-mode .clock-widget-body { place-items: center; }
 .clock-widget-half .clock-widget-body { grid-template-columns: minmax(112px, .95fr) minmax(118px, 1.05fr); gap: 6px; padding: 6px 9px 8px; }
+.clock-widget-wide .clock-widget-body { grid-template-columns: minmax(0, 1.6fr) minmax(210px, .8fr); gap: 0; }
 .clock-widget-full .clock-widget-body { grid-template-columns: minmax(0, 1.7fr) minmax(250px, .75fr); gap: 0; }
 
 .analog-clock-wrap {
@@ -984,10 +993,10 @@ button {
   height: var(--clock-diameter);
   aspect-ratio: 1;
   flex: 0 1 auto;
-  border: 2px solid #e8e9ec;
+  border: 0;
   border-radius: 50%;
   background: radial-gradient(circle at 46% 40%, #292b31, #111216 72%);
-  box-shadow: inset 0 0 0 3px #0d0e11, inset 0 0 22px rgba(255,255,255,.05), 0 18px 40px rgba(0,0,0,.42);
+  box-shadow: inset 0 0 28px rgba(255,255,255,.045), 0 18px 40px rgba(0,0,0,.35);
 }
 
 .clock-widget-half .analog-clock { --clock-diameter: min(100%, 132px); }
@@ -995,11 +1004,7 @@ button {
 .analog-clock > i::after { content: ""; position: absolute; top: 5px; left: 50%; width: 1px; height: 5px; background: rgba(255,255,255,.48); transform: translateX(-50%); }
 .analog-clock > i.hour-tick::after { width: 2px; height: 9px; background: #f4f4f5; }
 
-.clock-number { position: absolute; color: #f3f3f4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: clamp(9px, 1.25vw, 17px); font-weight: 600; line-height: 1; }
-.clock-number-12 { top: 9%; left: 50%; transform: translateX(-50%); }
-.clock-number-3 { top: 50%; right: 9%; transform: translateY(-50%); }
-.clock-number-6 { bottom: 9%; left: 50%; transform: translateX(-50%); }
-.clock-number-9 { top: 50%; left: 9%; transform: translateY(-50%); }
+.clock-number { position: absolute; color: #f3f3f4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: clamp(8px, 1.05vw, 15px); font-weight: 600; line-height: 1; transform: translate(-50%, -50%); }
 
 .clock-hand { position: absolute; bottom: 50%; left: 50%; z-index: 2; display: block; width: 4px; border-radius: 4px 4px 1px 1px; background: #f6f6f7; transform-origin: 50% 100%; will-change: transform; }
 .hour-hand { height: 25%; }
@@ -1009,8 +1014,8 @@ button {
 .clock-pin { position: absolute; top: 50%; left: 50%; z-index: 5; width: 9px; height: 9px; border: 2px solid #ff5a3d; border-radius: 50%; background: #17181c; transform: translate(-50%, -50%); }
 
 .analog-clock-caption { display: flex; align-items: baseline; justify-content: center; gap: 7px; min-width: 0; color: #aeb4bf; }
-.analog-clock-caption strong { color: #f6f7f8; font-size: 12px; }
-.analog-clock-caption span { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.analog-clock-caption strong { color: #f6f7f8; font-size: 20px; }
+.analog-clock-caption span { overflow: hidden; font-size: 19px; text-overflow: ellipsis; white-space: nowrap; }
 .clock-widget-half .analog-clock-caption { display: none; }
 
 .digital-clock {
@@ -1018,7 +1023,7 @@ button {
   place-content: center;
   min-width: 0;
   min-height: 0;
-  padding: 20px 4vw;
+  padding: 16px 2.5vw;
   overflow: hidden;
 }
 
@@ -1028,17 +1033,17 @@ button {
   min-width: 0;
   color: #f3f4f7;
   font-family: "Avenir Next Condensed", "Arial Narrow", Bahnschrift, "Segoe UI", sans-serif;
-  font-size: clamp(70px, 12vw, 210px);
+  font-size: clamp(76px, 13vw, 230px);
   font-stretch: condensed;
   font-weight: 200;
-  letter-spacing: -.075em;
+  letter-spacing: .012em;
   line-height: .82;
   text-shadow: 0 8px 32px rgba(0,0,0,.36);
 }
 
 .digital-time b { margin: 0 .02em; color: #717985; font-weight: 200; transform: translateY(-.06em); }
 .digital-time small { margin-left: .2em; color: #ff694f; font-size: .18em; font-weight: 600; letter-spacing: .08em; }
-.digital-date { display: flex; align-items: center; gap: 11px; margin-top: 22px; color: #abb1ba; font-size: clamp(12px, 1.5vw, 20px); letter-spacing: .03em; }
+.digital-date { display: flex; align-items: center; justify-content: center; width: 100%; gap: 11px; margin-top: 22px; color: #abb1ba; font-size: clamp(12px, 1.5vw, 20px); letter-spacing: .03em; text-align: center; }
 .digital-date strong { color: #f3f4f6; font-weight: 650; text-transform: uppercase; letter-spacing: .16em; }
 
 .clock-agenda {
@@ -1056,7 +1061,8 @@ button {
 .clock-agenda-heading span { font-size: 17px; font-weight: 700; }
 .clock-agenda-heading small { color: #8f96a1; font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
 .clock-agenda-list { min-height: 0; padding-top: 7px; overflow: auto; }
-.clock-agenda-item { display: grid; grid-template-columns: 3px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+.clock-agenda-item { display: grid; width: 100%; grid-template-columns: 3px minmax(0, 1fr); gap: 10px; padding: 9px 0; border: 0; border-bottom: 1px solid rgba(255,255,255,.06); border-radius: 4px; color: inherit; background: transparent; text-align: left; }
+.clock-agenda-item:hover, .clock-agenda-item:focus-visible { background: rgba(255,255,255,.065); outline: none; }
 .clock-agenda-item > i { width: 3px; height: 100%; min-height: 31px; border-radius: 3px; }
 .clock-agenda-item div { display: grid; min-width: 0; gap: 2px; }
 .clock-agenda-item strong { overflow: hidden; color: #eef0f3; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1073,6 +1079,15 @@ button {
 .clock-agenda.compact .clock-agenda-item strong { font-size: 9px; }
 .clock-agenda.compact .clock-agenda-item span { font-size: 8px; }
 .clock-agenda.compact .clock-agenda-empty { margin: 8px 0; font-size: 9px; }
+
+.clock-agenda-details-backdrop { position: absolute; inset: 45px 0 0; z-index: 7; display: grid; place-items: center; padding: 14px; background: rgba(5, 6, 9, .7); backdrop-filter: blur(5px); }
+.clock-agenda-details { width: min(480px, 100%); max-height: 100%; overflow: hidden; border: 1px solid #484e59; border-radius: 12px; background: #202228; box-shadow: 0 18px 50px rgba(0,0,0,.55); }
+.clock-agenda-details header { display: grid; grid-template-columns: 4px minmax(0, 1fr) 31px; align-items: center; gap: 10px; padding: 12px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.clock-agenda-details header > i { width: 4px; height: 30px; border-radius: 3px; }
+.clock-agenda-details header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.clock-agenda-details-body { display: grid; gap: 9px; max-height: min(320px, calc(100vh - 155px)); padding: 14px 18px 18px; overflow-y: auto; color: #c4c9d1; font-size: 12px; line-height: 1.45; }
+.clock-agenda-details-body span { display: flex; align-items: center; gap: 7px; }
+.clock-agenda-details-body p { margin: 3px 0 0; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.08); white-space: pre-wrap; }
 
 .app-scale-150 .clock-widget-half .clock-widget-header,
 .app-scale-200 .clock-widget-half .clock-widget-header { height: 38px; padding-block: 3px; }

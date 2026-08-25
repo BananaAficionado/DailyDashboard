@@ -30,4 +30,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: daily-dashboard-windows-portable
-          path: src-tauri/target/release/V0.4.3_Daily-Dashboard.exe
+          path: src-tauri/target/release/V0.4.4B_Daily-Dashboard.exe
