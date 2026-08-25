@@ -35,7 +35,7 @@ import { InteractiveMap, type MapPoint, type MapTrail, type MapTrailPoint } from
 import { expandIcalRecurrence, icalDateKey } from "./icalRecurrence";
 import { adsbAltitudeColor } from "./mapTiles";
 import { IdleDashboard, type IdleBackgroundKind, type SlideshowFit } from "./IdleBackgrounds";
-import { ClockWidget, type ClockAgendaItem } from "./ClockWidget";
+import { ClockWidget, type ClockAgendaItem, type ClockFaceMode } from "./ClockWidget";
 
 type ViewMode = "week" | "day";
 type CalendarStyle = "google" | "outlook";
@@ -78,6 +78,7 @@ type StoredSettings = EnvConfig & {
   updatePreference?: UpdatePreference;
   githubUpdateToken?: string;
   clockTimeZone?: string;
+  clockFaceMode?: ClockFaceMode;
 };
 
 type WidgetId = "calendar" | "clock" | "spotify" | "weather" | "aircraft" | "codex" | "terminal";
@@ -279,7 +280,7 @@ const DEFAULT_CODEX_OPEN_URL = "codex://threads/new";
 const DEFAULT_CODEX_WEB_URL = "https://chatgpt.com/codex";
 const DEFAULT_ADSB_API_URL = "https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{radius}";
 const APP_SCALES: AppScale[] = [75, 100, 125, 150, 200];
-const APP_VERSION = "V0.4.3";
+const APP_VERSION = "V0.4.4B";
 const RAIL_HIDE_DELAY_MS = 3_000;
 const EMPTY_DASHBOARD_IDLE_DELAY_MS = 15_000;
 const featureFlag = (value: unknown, defaultEnabled = true) => {
@@ -1744,8 +1745,15 @@ function App() {
   const clockAgenda = useMemo<ClockAgendaItem[]>(() => events.map((event) => ({
     id: event.id,
     title: event.summary || "Untitled event",
+    description: event.description,
+    location: event.location,
+    calendarName: event.calendarSummary,
+    organizer: event.organizer?.displayName || event.organizer?.email,
+    attendees: (event.attendees || []).filter((attendee) => !attendee.self).map((attendee) => attendee.displayName || attendee.email).filter((value): value is string => Boolean(value)),
     startDate: event.start.date,
     startDateTime: event.start.dateTime,
+    endDate: event.end.date,
+    endDateTime: event.end.dateTime,
     color: event.calendarColor,
   })), [events]);
   const renderCalendarSourceGroup = (key: "my" | "other", title: string, group: CalendarSource[]) => {
@@ -1971,8 +1979,10 @@ function App() {
               <ClockWidget
                 size={widgetSize("clock")}
                 timeZone={normalizeClockTimeZone(settings.clockTimeZone)}
+                faceMode={normalizeClockFaceMode(settings.clockFaceMode)}
                 agenda={clockAgenda}
                 onTimeZoneChange={(clockTimeZone) => saveSettings({ ...settings, clockTimeZone }).catch((err) => setError(String(err)))}
+                onFaceModeChange={(clockFaceMode) => saveSettings({ ...settings, clockFaceMode }).catch((err) => setError(String(err)))}
                 onClose={() => hideWidget("clock")}
               />
             ) : widget === "calendar" ? (
@@ -3923,6 +3933,10 @@ function normalizeClockTimeZone(value?: string) {
   }
 }
 
+function normalizeClockFaceMode(value?: string): ClockFaceMode | undefined {
+  return value === "analog" || value === "digital" ? value : undefined;
+}
+
 function normalizeSettings(settings: StoredSettings): StoredSettings {
   return {
     ...settings,
@@ -3957,6 +3971,7 @@ function normalizeSettings(settings: StoredSettings): StoredSettings {
     updatePreference: normalizeUpdatePreference(settings.updatePreference),
     githubUpdateToken: settings.githubUpdateToken?.trim(),
     clockTimeZone: normalizeClockTimeZone(settings.clockTimeZone),
+    clockFaceMode: normalizeClockFaceMode(settings.clockFaceMode),
     widgetLayout: normalizeWidgetLayout(settings.widgetLayout),
     selectedCalendarIds: Array.isArray(settings.selectedCalendarIds)
       ? settings.selectedCalendarIds.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim())

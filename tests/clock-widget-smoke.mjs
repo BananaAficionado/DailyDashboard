@@ -26,7 +26,7 @@ try {
   for (const size of ["half", "tall", "wide", "full"]) {
     const url = `http://127.0.0.1:${appPort}/?mock=1&clockSize=${size}&scale=${scale}&clockSmoke=${width}x${height}`;
     await cdp.send("Page.navigate", { url });
-    await delay(450);
+    await waitForEval(cdp, "Boolean(document.querySelector('[data-widget=clock]'))", 3000);
     await assertEval(cdp, `innerWidth === ${width} && innerHeight === ${height}`, `${size}: viewport is exactly ${width}x${height}`);
     await assertEval(cdp, `document.querySelector('[data-widget="clock"]')?.classList.contains('widget-size-${size}')`, `${size}: dashboard assigns the requested clock size`);
     await assertEval(cdp, `document.querySelector('.clock-widget')?.classList.contains('clock-widget-${size}')`, `${size}: clock renders its matching responsive mode`);
@@ -42,14 +42,28 @@ try {
     })()`, `${size}: clock content is contained without clipping or scrolling`);
 
     const analogExpected = size === "half" || size === "tall";
-    const agendaExpected = size === "half" || size === "full";
+    const agendaExpected = size !== "tall";
     await assertEval(cdp, `Boolean(document.querySelector('.analog-clock')) === ${analogExpected}`, `${size}: uses the expected analog/digital presentation`);
     await assertEval(cdp, `Boolean(document.querySelector('.clock-agenda')) === ${agendaExpected}`, `${size}: uses the expected agenda presentation`);
-    if (agendaExpected) await assertEval(cdp, "document.querySelectorAll('.clock-agenda-item').length > 0", `${size}: today's mock reminders are visible`);
+    if (agendaExpected) {
+      await assertEval(cdp, "document.querySelectorAll('.clock-agenda-item').length > 0", `${size}: today's mock reminders are visible`);
+      await click(cdp, ".clock-agenda-item");
+      await assertEval(cdp, "Boolean(document.querySelector('.clock-agenda-details[role=dialog]'))", `${size}: clicking an agenda item opens calendar details`);
+      await click(cdp, ".clock-agenda-details .icon-button");
+    }
+
+    await click(cdp, analogExpected ? '.clock-face-toggle button[title="Digital clock"]' : '.clock-face-toggle button[title="Analog clock"]');
+    await assertEval(cdp, `Boolean(document.querySelector('${analogExpected ? ".digital-clock" : ".analog-clock"}'))`, `${size}: the user can switch clock faces`);
+    await click(cdp, analogExpected ? '.clock-face-toggle button[title="Analog clock"]' : '.clock-face-toggle button[title="Digital clock"]');
 
     await click(cdp, ".clock-zone-button");
-    await assertEval(cdp, "Boolean(document.querySelector('.clock-zone-popover select'))", `${size}: timezone selector opens inside the widget`);
-    await evaluate(cdp, `(() => { const select = document.querySelector('.clock-zone-popover select'); select.value = 'Europe/London'; select.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await assertEval(cdp, `(() => {
+      const widget = document.querySelector('.clock-widget').getBoundingClientRect();
+      const popover = document.querySelector('.clock-zone-popover').getBoundingClientRect();
+      const options = document.querySelector('.clock-zone-options');
+      return popover.top >= widget.top && popover.bottom <= widget.bottom + 1 && options.scrollHeight >= options.clientHeight;
+    })()`, `${size}: timezone selector is a contained, scrollable in-app menu`);
+    await click(cdp, '.clock-zone-options button:nth-child(13)');
     await delay(80);
     await assertEval(cdp, "document.querySelector('.clock-zone-button')?.textContent.includes('London')", `${size}: timezone selection updates immediately`);
 
@@ -80,6 +94,15 @@ async function evaluate(cdp, expression) {
 
 async function assertEval(cdp, expression, message) {
   if (!await evaluate(cdp, expression)) throw new Error(message);
+}
+
+async function waitForEval(cdp, expression, timeoutMs) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (await evaluate(cdp, expression)) return;
+    await delay(60);
+  }
+  throw new Error(`Timed out waiting for page condition: ${expression}`);
 }
 
 async function connectCdp(url) {

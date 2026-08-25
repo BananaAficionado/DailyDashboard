@@ -22,7 +22,7 @@ assert(
 assert(
   appSource.includes("onToggleFullscreen") &&
     appSource.includes("<strong>Application</strong>") &&
-    appSource.includes('const APP_VERSION = "V0.4.3"') &&
+    appSource.includes('const APP_VERSION = "V0.4.4B"') &&
     appSource.includes("Version {APP_VERSION}") &&
     appSource.includes("Toggle Full Screen") &&
     cssSource.includes(".settings-action-button") &&
@@ -31,11 +31,11 @@ assert(
 );
 
 assert(
-  tauriConfig.version === "0.4.3" &&
-    tauriConfig.mainBinaryName === "V0.4.3_Daily-Dashboard" &&
+  tauriConfig.version === "0.4.4-beta.2" &&
+    tauriConfig.mainBinaryName === "V0.4.4B_Daily-Dashboard" &&
     tauriConfig.bundle.windows.nsis.installerHooks === "installer-hooks.nsh" &&
     tauriConfig.bundle.targets.includes("nsis"),
-  "release metadata is V0.4.3 with the prefixed main binary name and NSIS hooks"
+  "release metadata is V0.4.4B with the prefixed main binary name and NSIS hooks"
 );
 
 assert(
@@ -51,6 +51,11 @@ assert(
     clockSource.includes("AnalogClock") &&
     clockSource.includes("DigitalClock") &&
     clockSource.includes("ClockAgenda") &&
+    clockSource.includes("AgendaDetails") &&
+    clockSource.includes("onFaceModeChange") &&
+    clockSource.includes("size !== \"tall\"") &&
+    clockSource.includes('padStart(2, "0")') &&
+    clockSource.includes("Array.from({ length: 12 }") &&
     clockSource.includes("setInterval(tick, 100)") &&
     clockSource.includes('timeZone === "system"') &&
     cssSource.includes(".second-hand") &&
@@ -121,7 +126,8 @@ assert(
     appSource.includes("rollbackToPreviousRelease") &&
     appSource.includes("Rollback to {previousRelease.version}") &&
     rustSource.includes("async fn check_for_rollback") &&
-    rustSource.includes("compare_versions(&release.tag_name, &current_version).is_lt()") &&
+    rustSource.includes("compare_numeric_versions(&release.tag_name, &current_version).is_lt()") &&
+    rustSource.includes('compare_numeric_versions("V0.4.4A", "V0.4.4B").is_eq()') &&
     rustSource.includes("any(|asset| preferred_update_asset(&asset.name))") &&
     rustSource.includes("check_for_rollback,"),
   "settings can locate, verify, and reinstall the immediately previous stable GitHub release"
