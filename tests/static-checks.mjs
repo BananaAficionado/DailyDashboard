@@ -22,7 +22,7 @@ assert(
 assert(
   appSource.includes("onToggleFullscreen") &&
     appSource.includes("<strong>Application</strong>") &&
-    appSource.includes('const APP_VERSION = "V0.4.4"') &&
+    appSource.includes('const APP_VERSION = "V0.4.5"') &&
     appSource.includes("Version {APP_VERSION}") &&
     appSource.includes("Toggle Full Screen") &&
     cssSource.includes(".settings-action-button") &&
@@ -31,11 +31,11 @@ assert(
 );
 
 assert(
-  tauriConfig.version === "0.4.4" &&
-    tauriConfig.mainBinaryName === "V0.4.4_Daily-Dashboard" &&
+  tauriConfig.version === "0.4.5" &&
+    tauriConfig.mainBinaryName === "V0.4.5_Daily-Dashboard" &&
     tauriConfig.bundle.windows.nsis.installerHooks === "installer-hooks.nsh" &&
     tauriConfig.bundle.targets.includes("nsis"),
-  "release metadata is V0.4.4 with the prefixed main binary name and NSIS hooks"
+  "release metadata is V0.4.5 with the prefixed main binary name and NSIS hooks"
 );
 
 assert(
@@ -56,10 +56,16 @@ assert(
     clockSource.includes("size !== \"tall\"") &&
     clockSource.includes('padStart(2, "0")') &&
     clockSource.includes("Array.from({ length: 12 }") &&
+    clockSource.includes("detailsClosing") &&
+    clockSource.includes("clock-side-pane") &&
     clockSource.includes("setInterval(tick, 100)") &&
     clockSource.includes('timeZone === "system"') &&
     cssSource.includes(".second-hand") &&
-    cssSource.includes(".clock-widget-full .clock-widget-body"),
+    cssSource.includes(".clock-widget-full .clock-widget-body") &&
+    cssSource.includes("min(28cqw, 55cqh)") &&
+    cssSource.includes(".clock-widget-half .clock-number { display: none; }") &&
+    cssSource.includes("@keyframes clock-details-enter") &&
+    cssSource.includes("@keyframes clock-details-exit"),
   "clock widget has accurate analog seconds, in-widget timezones, digital wide layouts, and responsive daily agenda modes"
 );
 
@@ -127,7 +133,7 @@ assert(
     appSource.includes("Rollback to {previousRelease.version}") &&
     rustSource.includes("async fn check_for_rollback") &&
     rustSource.includes("compare_numeric_versions(&release.tag_name, &current_version).is_lt()") &&
-    rustSource.includes('compare_numeric_versions("V0.4.3", "V0.4.4").is_lt()') &&
+    rustSource.includes('compare_numeric_versions("V0.4.4", "V0.4.5").is_lt()') &&
     rustSource.includes("any(|asset| preferred_update_asset(&asset.name))") &&
     rustSource.includes("check_for_rollback,"),
   "settings can locate, verify, and reinstall the immediately previous stable GitHub release"

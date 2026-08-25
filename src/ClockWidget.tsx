@@ -43,6 +43,7 @@ export function ClockWidget({ size, timeZone = "system", faceMode, agenda, onTim
   const [now, setNow] = useState(() => new Date());
   const [timeZoneOpen, setTimeZoneOpen] = useState(false);
   const [selectedAgendaItem, setSelectedAgendaItem] = useState<ClockAgendaItem | null>(null);
+  const [detailsClosing, setDetailsClosing] = useState(false);
   const resolvedTimeZone = timeZone === "system" ? undefined : timeZone;
   const resolvedFaceMode = faceMode || (size === "tall" || size === "half" ? "analog" : "digital");
   const analog = resolvedFaceMode === "analog";
@@ -53,6 +54,15 @@ export function ClockWidget({ size, timeZone = "system", faceMode, agenda, onTim
     const timer = window.setInterval(tick, 100);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!detailsClosing) return;
+    const timer = window.setTimeout(() => {
+      setSelectedAgendaItem(null);
+      setDetailsClosing(false);
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [detailsClosing]);
 
   const parts = useMemo(() => clockParts(now, resolvedTimeZone), [now, resolvedTimeZone]);
   const todayAgenda = useMemo(
@@ -96,14 +106,15 @@ export function ClockWidget({ size, timeZone = "system", faceMode, agenda, onTim
         </div>
       ) : null}
 
-      <div className="clock-widget-body">
+      <div className={`clock-widget-body ${selectedAgendaItem && !detailsClosing ? "details-open" : ""}`}>
         {analog ? <AnalogClock parts={parts} /> : <DigitalClock parts={parts} />}
-        {showAgenda ? <ClockAgenda items={todayAgenda} timeZone={resolvedTimeZone} compact={size === "half"} onSelect={setSelectedAgendaItem} /> : null}
+        {showAgenda ? (
+          <div className={`clock-side-pane ${selectedAgendaItem ? "has-details" : ""} ${detailsClosing ? "details-closing" : ""}`}>
+            <ClockAgenda items={todayAgenda} timeZone={resolvedTimeZone} compact={size === "half"} onSelect={(item) => { setDetailsClosing(false); setSelectedAgendaItem(item); }} />
+            {selectedAgendaItem ? <AgendaDetails item={selectedAgendaItem} timeZone={resolvedTimeZone} onClose={() => setDetailsClosing(true)} /> : null}
+          </div>
+        ) : null}
       </div>
-
-      {selectedAgendaItem ? (
-        <AgendaDetails item={selectedAgendaItem} timeZone={resolvedTimeZone} onClose={() => setSelectedAgendaItem(null)} />
-      ) : null}
     </section>
   );
 }
@@ -158,19 +169,17 @@ function ClockAgenda({ items, timeZone, compact, onSelect }: { items: ClockAgend
 
 function AgendaDetails({ item, timeZone, onClose }: { item: ClockAgendaItem; timeZone?: string; onClose: () => void }) {
   return (
-    <div className="clock-agenda-details-backdrop" onClick={onClose}>
-      <article className="clock-agenda-details" role="dialog" aria-modal="true" aria-label={`${item.title} details`} onClick={(event) => event.stopPropagation()}>
-        <header><i style={{ background: item.color || "#8ab4f8" }} /><strong>{item.title}</strong><button className="icon-button" onClick={onClose} title="Close details"><X size={17} /></button></header>
-        <div className="clock-agenda-details-body">
-          <span>{formatAgendaRange(item, timeZone)}</span>
-          {item.location ? <span><MapPin size={14} />{item.location}</span> : null}
-          {item.calendarName ? <span>Calendar: {item.calendarName}</span> : null}
-          {item.organizer ? <span>Organiser: {item.organizer}</span> : null}
-          {item.attendees?.length ? <span>Attendees: {item.attendees.join(", ")}</span> : null}
-          {item.description ? <p>{stripEventHtml(item.description)}</p> : null}
-        </div>
-      </article>
-    </div>
+    <article className="clock-agenda-details" role="dialog" aria-label={`${item.title} details`}>
+      <header><i style={{ background: item.color || "#8ab4f8" }} /><strong>{item.title}</strong><button className="icon-button" onClick={onClose} title="Close details"><X size={17} /></button></header>
+      <div className="clock-agenda-details-body">
+        <span>{formatAgendaRange(item, timeZone)}</span>
+        {item.location ? <span><MapPin size={14} />{item.location}</span> : null}
+        {item.calendarName ? <span>Calendar: {item.calendarName}</span> : null}
+        {item.organizer ? <span>Organiser: {item.organizer}</span> : null}
+        {item.attendees?.length ? <span>Attendees: {item.attendees.join(", ")}</span> : null}
+        {item.description ? <p>{stripEventHtml(item.description)}</p> : null}
+      </div>
+    </article>
   );
 }
 
