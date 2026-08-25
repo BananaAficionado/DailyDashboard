@@ -281,7 +281,7 @@ async fn check_for_updates(
 ) -> Result<Option<AvailableUpdate>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("DailyDashboard-Updater/0.4.4")
+        .user_agent("DailyDashboard-Updater/0.4.5")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -338,7 +338,7 @@ async fn check_for_rollback(
 ) -> Result<Option<AvailableUpdate>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("DailyDashboard-Updater/0.4.4")
+        .user_agent("DailyDashboard-Updater/0.4.5")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -418,7 +418,7 @@ async fn download_update(
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
-        .user_agent("DailyDashboard-Updater/0.4.4")
+        .user_agent("DailyDashboard-Updater/0.4.5")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -1002,6 +1002,8 @@ mod update_tests {
         assert!(compare_versions("V0.4.3", "V0.4.2").is_gt());
         assert!(compare_versions("V0.4.4", "V0.4.3").is_gt());
         assert!(compare_numeric_versions("V0.4.3", "V0.4.4").is_lt());
+        assert!(compare_versions("V0.4.5", "V0.4.4").is_gt());
+        assert!(compare_numeric_versions("V0.4.4", "V0.4.5").is_lt());
     }
 
     #[test]

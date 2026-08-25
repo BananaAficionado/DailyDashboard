@@ -30,16 +30,19 @@ try {
     await assertEval(cdp, `innerWidth === ${width} && innerHeight === ${height}`, `${size}: viewport is exactly ${width}x${height}`);
     await assertEval(cdp, `document.querySelector('[data-widget="clock"]')?.classList.contains('widget-size-${size}')`, `${size}: dashboard assigns the requested clock size`);
     await assertEval(cdp, `document.querySelector('.clock-widget')?.classList.contains('clock-widget-${size}')`, `${size}: clock renders its matching responsive mode`);
-    await assertEval(cdp, `(() => {
+    const containment = await evaluate(cdp, `(() => {
       const widget = document.querySelector('.clock-widget');
       const body = document.querySelector('.clock-widget-body');
       const face = document.querySelector('.analog-clock, .digital-clock');
-      if (!widget || !body || !face) return false;
+      if (!widget || !body || !face) return { pass: false, missing: true };
       const w = widget.getBoundingClientRect(), b = body.getBoundingClientRect(), f = face.getBoundingClientRect();
-      return widget.scrollWidth <= widget.clientWidth + 1 && widget.scrollHeight <= widget.clientHeight + 1 &&
+      const pass = widget.scrollWidth <= widget.clientWidth + 1 && widget.scrollHeight <= widget.clientHeight + 1 &&
         b.left >= w.left - 1 && b.right <= w.right + 1 && b.top >= w.top - 1 && b.bottom <= w.bottom + 1 &&
-        f.left >= b.left - 1 && f.right <= b.right + 1 && f.top >= b.top - 1 && f.bottom <= b.bottom + 1;
-    })()`, `${size}: clock content is contained without clipping or scrolling`);
+        f.left >= b.left - 1 && f.right <= b.right + 1 && f.top >= b.top - 1 && f.bottom <= b.bottom + 1 &&
+        (!face.classList.contains('digital-clock') || (face.scrollWidth <= face.clientWidth + 1 && face.scrollHeight <= face.clientHeight + 1));
+      return { pass, widget: [widget.clientWidth, widget.scrollWidth, widget.clientHeight, widget.scrollHeight], body: [b.left, b.right, b.top, b.bottom], widgetRect: [w.left, w.right, w.top, w.bottom], face: [f.left, f.right, f.top, f.bottom], faceScroll: [face.clientWidth, face.scrollWidth, face.clientHeight, face.scrollHeight] };
+    })()`);
+    if (!containment.pass) throw new Error(`${size}: clock content is contained without clipping or scrolling ${JSON.stringify(containment)}`);
 
     const analogExpected = size === "half" || size === "tall";
     const agendaExpected = size !== "tall";
@@ -47,9 +50,33 @@ try {
     await assertEval(cdp, `Boolean(document.querySelector('.clock-agenda')) === ${agendaExpected}`, `${size}: uses the expected agenda presentation`);
     if (agendaExpected) {
       await assertEval(cdp, "document.querySelectorAll('.clock-agenda-item').length > 0", `${size}: today's mock reminders are visible`);
+      const faceWidthBeforeDetails = await evaluate(cdp, "document.querySelector('.analog-clock-wrap, .digital-clock').getBoundingClientRect().width");
       await click(cdp, ".clock-agenda-item");
-      await assertEval(cdp, "Boolean(document.querySelector('.clock-agenda-details[role=dialog]'))", `${size}: clicking an agenda item opens calendar details`);
+      await delay(100);
+      const detailGeometry = await evaluate(cdp, `(() => {
+        const body = document.querySelector('.clock-widget-body');
+        const pane = document.querySelector('.clock-side-pane');
+        const details = document.querySelector('.clock-agenda-details[role=dialog]');
+        const face = document.querySelector('.analog-clock-wrap, .digital-clock');
+        if (!body || !pane || !details || !face || !body.classList.contains('details-open')) return { pass: false, missing: true, bodyClass: body?.className };
+        const b = body.getBoundingClientRect(), p = pane.getBoundingClientRect(), d = details.getBoundingClientRect();
+        const durations = getComputedStyle(body).transitionDuration.split(',').map(value => parseFloat(value));
+        const pass = Math.max(...durations) >= .3 && face.getBoundingClientRect().width <= ${faceWidthBeforeDetails} + 1 &&
+          p.left >= b.left - 1 && p.right <= b.right + 1 && Math.abs(d.width - p.width) <= 1 && d.top >= p.top - 1 && d.bottom <= p.bottom + 1;
+        return { pass, duration: durations, faceWidth: face.getBoundingClientRect().width, before: ${faceWidthBeforeDetails}, body: [b.left,b.right,b.top,b.bottom], pane: [p.left,p.right,p.top,p.bottom], details: [d.left,d.right,d.top,d.bottom] };
+      })()`);
+      if (!detailGeometry.pass) throw new Error(`${size}: details animate inside the side pane while smoothly reallocating clock space ${JSON.stringify(detailGeometry)}`);
       await click(cdp, ".clock-agenda-details .icon-button");
+    }
+
+    if (size === "half" && analogExpected) {
+      await assertEval(cdp, `(() => {
+        const clock = document.querySelector('.analog-clock');
+        const wrap = document.querySelector('.analog-clock-wrap');
+        const c = clock.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+        return [...document.querySelectorAll('.clock-number')].every(number => getComputedStyle(number).display === 'none') &&
+          c.width >= Math.min(w.width, w.height) * .68;
+      })()`, "half: analog numerals are removed and the face uses the available compact space");
     }
 
     await click(cdp, analogExpected ? '.clock-face-toggle button[title="Digital clock"]' : '.clock-face-toggle button[title="Analog clock"]');
