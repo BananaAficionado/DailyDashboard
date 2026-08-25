@@ -29,6 +29,15 @@ try {
   await assertEval(cdp, `innerWidth === ${width} && innerHeight === ${height}`, `viewport is exactly ${width}x${height}`);
   await assertEval(cdp, `document.querySelector('.app-shell')?.classList.contains('app-scale-${scale}')`, `application scale is ${scale}%`);
   await assertEval(cdp, "!document.querySelector('.rail-button[title=\"Codex\"]')", "Codex rail control is excluded by the release flag");
+  await assertEval(cdp, `(() => {
+    const marker = document.querySelector('.weather-current-time');
+    const graph = document.querySelector('.weather-day-graph');
+    const button = document.querySelector('.weather-radar-toggle');
+    if (!marker || !graph || !button || !marker.textContent.trim()) return false;
+    const m = marker.getBoundingClientRect(), g = graph.getBoundingClientRect(), style = getComputedStyle(button);
+    return m.left >= g.left - 1 && m.left <= g.right + 1 && m.top >= g.top - 1 && m.bottom <= g.bottom + 1 &&
+      style.color !== style.backgroundColor && style.webkitTextFillColor !== style.backgroundColor;
+  })()`, "today's weather graph contains a labelled current-time line and Show Radar has contrasting text");
 
   await click(cdp, ".weather-rain-history-toggle");
   await assertEval(cdp, "document.querySelector('.weather-rain-history-toggle')?.textContent.trim() === 'Rain 1h' && Boolean(document.querySelector('.rain-history-1h'))", "rain history opens at one hour");
@@ -94,7 +103,7 @@ try {
     const target = candidates.sort((a, b) => Math.min(...fish.map(item => Math.hypot(item.x - b.x, item.y - b.y))) - Math.min(...fish.map(item => Math.hypot(item.x - a.x, item.y - a.y))))[0];
     pond.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7, clientX: target.x, clientY: target.y }));
   })()`);
-  await delay(20);
+  await delay(80);
   await assertEval(cdp, "document.querySelectorAll('.pixel-fish-food i').length === 7 && [...document.querySelectorAll('.pixel-fish-lane')].some(fish => fish.dataset.behaviour === 'seeking-food')", "fish food is placed and takes priority over the cursor");
   await delay(3200);
   await assertEval(cdp, "document.querySelectorAll('.pixel-fish-food').length === 0", "a fish reaches and eats the food");

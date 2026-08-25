@@ -60,10 +60,13 @@ assert(
     clockSource.includes("clock-side-pane") &&
     clockSource.includes("setInterval(tick, 100)") &&
     clockSource.includes('timeZone === "system"') &&
+    clockSource.includes("onWheel={(event) => event.stopPropagation()}") &&
     cssSource.includes(".second-hand") &&
     cssSource.includes(".clock-widget-full .clock-widget-body") &&
     cssSource.includes("min(28cqw, 55cqh)") &&
     cssSource.includes(".clock-widget-half .clock-number { display: none; }") &&
+    cssSource.includes("grid-template-rows: auto minmax(0, 1fr)") &&
+    cssSource.includes("touch-action: pan-y") &&
     cssSource.includes("@keyframes clock-details-enter") &&
     cssSource.includes("@keyframes clock-details-exit"),
   "clock widget has accurate analog seconds, in-widget timezones, digital wide layouts, and responsive daily agenda modes"
@@ -275,6 +278,10 @@ assert(
     appSource.includes('className="weather-solar-gradient"') &&
     cssSource.includes(".weather-graph-time-axis") &&
     cssSource.includes(".weather-solar-gradient") &&
+    appSource.includes('className={`weather-current-time') &&
+    appSource.includes("weatherCurrentTimeX(now, timeZone, hourly)") &&
+    cssSource.includes(".weather-current-time") &&
+    cssSource.includes("-webkit-text-fill-color: #15191e") &&
     appSource.includes('title="Hide Calendar"'),
   "weather graphs expose readable narrow time labels, solar shading, and the calendar has a matching close control"
 );
@@ -290,7 +297,7 @@ assert(
 
 assert(
   appSource.includes('narrow={widgetSize("weather") === "tall"}') &&
-    appSource.includes("WeatherDayGraph({ day, narrow = false }") &&
+  appSource.includes("WeatherDayGraph({ day, narrow = false, now, timeZone }") &&
     appSource.includes("formatGraphHour(item.time, narrow)") &&
     cssSource.includes(".weather-day-graph.narrow .weather-graph-time-axis") &&
     cssSource.includes(".widget-size-half .weather-panel .weather-location"),

@@ -92,7 +92,7 @@ export function ClockWidget({ size, timeZone = "system", faceMode, agenda, onTim
       {timeZoneOpen ? (
         <div className="clock-zone-popover" role="dialog" aria-label="Choose timezone">
           <span>Timezone</span>
-          <div className="clock-zone-options" role="listbox">
+          <div className="clock-zone-options" role="listbox" tabIndex={0} onWheel={(event) => event.stopPropagation()}>
             {TIME_ZONES.map(([value, label]) => (
               <button
                 key={value}

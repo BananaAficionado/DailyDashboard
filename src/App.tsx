@@ -195,6 +195,7 @@ type WeatherLocation = {
 };
 
 type WeatherData = {
+  timezone?: string;
   currentTemp: number;
   feelsLikeTemp: number;
   minTemp: number;
@@ -1638,6 +1639,7 @@ function App() {
       .filter((item: { time: string }) => !currentWeatherTime || item.time <= currentWeatherTime)
       .slice(-24);
     setWeather({
+      timezone: typeof data.timezone === "string" ? data.timezone : undefined,
       currentTemp: Math.round(data.current?.temperature_2m ?? 0),
       feelsLikeTemp: Math.round(data.current?.apparent_temperature ?? data.current?.temperature_2m ?? 0),
       minTemp: today.minTemp,
@@ -2701,6 +2703,7 @@ function WeatherPanel({
   const [radarCenter, setRadarCenter] = useState(() => ({ latitude: location?.latitude || -37.8136, longitude: location?.longitude || 144.9631 }));
   const [radarZoom, setRadarZoom] = useState(7);
   const [radarMonochrome, setRadarMonochrome] = useState(true);
+  const [weatherNow, setWeatherNow] = useState(() => new Date());
   const radarFrame = radarFrames[radarFrameIndex] || null;
   const showSetup = !location || settingsOpen;
   const forecastDays = weather?.days?.length ? weather.days : weather ? [{
@@ -2724,6 +2727,13 @@ function WeatherPanel({
   useEffect(() => {
     setForecastDayIndex((index) => Math.min(index, Math.max(0, forecastDays.length - 1)));
   }, [forecastDays.length]);
+
+  useEffect(() => {
+    const updateNow = () => setWeatherNow(new Date());
+    updateNow();
+    const timer = window.setInterval(updateNow, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (location) setRadarCenter({ latitude: location.latitude, longitude: location.longitude });
@@ -2858,7 +2868,7 @@ function WeatherPanel({
             <span>{activeDay.precipTotal.toFixed(1)} mm</span>
           </div>
           {forecastDayIndex === 0 && weather.alert ? <div className="weather-alert">{weather.alert}</div> : null}
-          {forecastMode === "five" ? <FiveDayForecast days={forecastDays.slice(0, 5)} /> : <WeatherDayGraph day={activeDay} narrow={narrow} />}
+          {forecastMode === "five" ? <FiveDayForecast days={forecastDays.slice(0, 5)} /> : <WeatherDayGraph day={activeDay} narrow={narrow} now={forecastDayIndex === 0 ? weatherNow : undefined} timeZone={weather.timezone} />}
         </>
       ) : (
         <div className="weather-setup">
@@ -2885,7 +2895,7 @@ function RainHistoryGraph({ history, period }: { history: { time: string; value:
   );
 }
 
-function WeatherDayGraph({ day, narrow = false }: { day: WeatherDay; narrow?: boolean }) {
+function WeatherDayGraph({ day, narrow = false, now, timeZone }: { day: WeatherDay; narrow?: boolean; now?: Date; timeZone?: string }) {
   const hourly = day.hourly.slice(0, 24);
   const timeTicks = hourly
     .map((item, sourceIndex) => ({
@@ -2920,6 +2930,8 @@ function WeatherDayGraph({ day, narrow = false }: { day: WeatherDay; narrow?: bo
   const sunriseX = solarTimeX(day.sunrise, hourly);
   const sunsetX = solarTimeX(day.sunset, hourly);
   const solarBandWidth = sunriseX !== null && sunsetX !== null ? Math.max(0, sunsetX - sunriseX) : 0;
+  const currentTimeX = now ? weatherCurrentTimeX(now, timeZone, hourly) : null;
+  const currentTimeLabel = now?.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone });
   const graphSolarLabel = day.sunrise && day.sunset
     ? `; sunrise ${formatGraphHour(day.sunrise)}, sunset ${formatGraphHour(day.sunset)}`
     : "";
@@ -2933,6 +2945,11 @@ function WeatherDayGraph({ day, narrow = false }: { day: WeatherDay; narrow?: bo
           aria-hidden="true"
           title={`Sunrise ${formatGraphHour(day.sunrise || "")}; sunset ${formatGraphHour(day.sunset || "")}`}
         />
+      ) : null}
+      {currentTimeX !== null ? (
+        <div className={`weather-current-time ${currentTimeX > 85 ? "near-end" : ""}`} style={{ left: `${currentTimeX}%` }} title={`Current time ${currentTimeLabel}`} aria-label={`Current time ${currentTimeLabel}`}>
+          <span>{currentTimeLabel}</span>
+        </div>
       ) : null}
       <div className="temp-curve">
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={`Temperature from ${Math.round(minTemp)}° to ${Math.round(maxTemp)}°`}>
@@ -5062,6 +5079,7 @@ function mockPlayback(): PlaybackState {
 function mockWeather(): WeatherData {
   const days = mockWeatherDays();
   return {
+    timezone: "Australia/Melbourne",
     currentTemp: 18,
     feelsLikeTemp: 17,
     minTemp: days[0].minTemp,
@@ -5209,6 +5227,26 @@ function solarTimeX(value: string | undefined, hourly: WeatherDay["hourly"]) {
     return null;
   }
   return Math.max(0, Math.min(100, ((target - start) / (end - start)) * 100));
+}
+
+function weatherCurrentTimeX(now: Date, timeZone: string | undefined, hourly: WeatherDay["hourly"]) {
+  if (hourly.length < 2) return null;
+  const parts = new Intl.DateTimeFormat("en-AU", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone,
+  }).formatToParts(now);
+  const value = (type: string) => Number(parts.find((part) => part.type === type)?.value || 0);
+  const currentMinutes = value("hour") * 60 + value("minute");
+  const minutesFor = (time: string) => {
+    const match = time.match(/T(\d{2}):(\d{2})/);
+    return match ? Number(match[1]) * 60 + Number(match[2]) : NaN;
+  };
+  const start = minutesFor(hourly[0].time);
+  const end = minutesFor(hourly[hourly.length - 1].time);
+  if (![currentMinutes, start, end].every(Number.isFinite) || end <= start) return null;
+  return Math.max(0, Math.min(100, ((currentMinutes - start) / (end - start)) * 100));
 }
 
 function smoothPath(points: { x: number; y: number }[]) {

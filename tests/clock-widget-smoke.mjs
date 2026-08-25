@@ -88,8 +88,14 @@ try {
       const widget = document.querySelector('.clock-widget').getBoundingClientRect();
       const popover = document.querySelector('.clock-zone-popover').getBoundingClientRect();
       const options = document.querySelector('.clock-zone-options');
-      return popover.top >= widget.top && popover.bottom <= widget.bottom + 1 && options.scrollHeight >= options.clientHeight;
+      return popover.top >= widget.top && popover.bottom <= widget.bottom + 1 &&
+        options.getBoundingClientRect().bottom <= popover.bottom + 1 && options.scrollHeight > options.clientHeight;
     })()`, `${size}: timezone selector is a contained, scrollable in-app menu`);
+    const optionBounds = await evaluate(cdp, `(() => { const rect = document.querySelector('.clock-zone-options').getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: optionBounds.x, y: optionBounds.y });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: optionBounds.x, y: optionBounds.y, deltaX: 0, deltaY: 180 });
+    await delay(100);
+    await assertEval(cdp, "document.querySelector('.clock-zone-options').scrollTop > 0", `${size}: mouse wheel scrolls the timezone choices`);
     await click(cdp, '.clock-zone-options button:nth-child(13)');
     await delay(80);
     await assertEval(cdp, "document.querySelector('.clock-zone-button')?.textContent.includes('London')", `${size}: timezone selection updates immediately`);
