@@ -4760,7 +4760,7 @@ dependencies = [
 name = "ultrawide-daily-dashboard"
 version = "0.5.12"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "chacha20poly1305",
  "getrandom 0.3.4",
  "keyring",
