@@ -4,6 +4,8 @@ Report vulnerabilities through [GitHub’s private reporting form](https://githu
 
 ## Local credentials
 
+The credential-storage and CSP changes are on `main`. The published V0.5.12 installer predates them; they require a new build.
+
 Desktop account tokens and saved integration secrets are encrypted locally. The encryption key is kept in the operating system’s credential store. Existing localStorage tokens and plaintext settings secrets migrate when the desktop app loads; old copies are removed after the encrypted write succeeds.
 
 If the operating system credential store is locked or unavailable, unlock it before reconnecting an account. The app does not fall back to plaintext storage.
