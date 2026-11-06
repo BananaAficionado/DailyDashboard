@@ -1,4 +1,5 @@
 mod spotify_local;
+mod credentials;
 mod display_lock;
 mod startup_updates;
 use base64::{engine::general_purpose, Engine as _};
@@ -198,14 +199,40 @@ fn load_initial_config(app: AppHandle) -> Result<InitialConfig, String> {
     })
 }
 
-fn write_settings(app: &AppHandle, settings: &StoredSettings) -> Result<(), String> {
-    let path = settings_path(app)?;
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
-    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    let pending=path.with_extension("pending");
-    fs::write(&pending,json).map_err(|e|e.to_string())?;
-    fs::rename(&pending,&path).map_err(|e|e.to_string())
+#[derive(Default, Serialize, Deserialize)]
+struct SettingsSecrets {
+    spotify_client_secret: Option<String>,
+    google_client_secret: Option<String>,
+    github_update_token: Option<String>,
+    adsb_api_key: Option<String>,
+    ical_calendar_url: Option<String>,
 }
+
+fn split_settings_secrets(settings: &StoredSettings) -> (StoredSettings, SettingsSecrets) {
+    let mut public = settings.clone();
+    let secrets = SettingsSecrets {
+        spotify_client_secret: public.spotify_client_secret.take(),
+        google_client_secret: public.google_client_secret.take(),
+        github_update_token: public.github_update_token.take(),
+        adsb_api_key: public.adsb_api_key.take(),
+        ical_calendar_url: public.ical_calendar_url.take(),
+    };
+    (public, secrets)
+}
+fn has_settings_secrets(settings: &StoredSettings) -> bool {
+    [&settings.spotify_client_secret, &settings.google_client_secret, &settings.github_update_token, &settings.adsb_api_key, &settings.ical_calendar_url]
+        .iter().any(|value| value.as_ref().is_some_and(|value| !value.is_empty()))
+}
+fn write_settings(app: &AppHandle, settings: &StoredSettings) -> Result<(), String> {
+    let (public, secrets) = split_settings_secrets(settings);
+    let encoded = if has_settings_secrets(settings) {
+        Some(serde_json::to_string(&secrets).map_err(|_| "Could not encode settings credentials")?)
+    } else { None };
+    credentials::write(app, "settings", encoded.as_deref())?;
+    let json = serde_json::to_vec_pretty(&public).map_err(|_| "Could not encode settings")?;
+    credentials::write_private(&settings_path(app)?, &json)
+}
+
 #[tauri::command]
 fn save_settings(app: AppHandle, settings: StoredSettings) -> Result<(), String> {
     {
@@ -910,11 +937,22 @@ async fn fetch_adsb(url: String, api_key: Option<String>) -> Result<serde_json::
 
 fn read_settings(app: &AppHandle) -> Result<StoredSettings, String> {
     let path = settings_path(app)?;
-    if !path.exists() {
-        return Ok(StoredSettings::default());
+    let mut settings: StoredSettings = if path.exists() {
+        serde_json::from_str(&fs::read_to_string(&path).map_err(|_| "Could not read settings")?)
+            .map_err(|_| "Could not decode settings")?
+    } else { StoredSettings::default() };
+    if has_settings_secrets(&settings) {
+        write_settings(app, &settings)?;
     }
-    let json = fs::read_to_string(path).map_err(|err| err.to_string())?;
-    serde_json::from_str(&json).map_err(|err| err.to_string())
+    if let Some(json) = credentials::read(app, "settings")? {
+        let secrets: SettingsSecrets = serde_json::from_str(&json).map_err(|_| "Could not decode settings credentials")?;
+        settings.spotify_client_secret = secrets.spotify_client_secret;
+        settings.google_client_secret = secrets.google_client_secret;
+        settings.github_update_token = secrets.github_update_token;
+        settings.adsb_api_key = secrets.adsb_api_key;
+        settings.ical_calendar_url = secrets.ical_calendar_url;
+    }
+    Ok(settings)
 }
 
 fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1024,6 +1062,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            credentials::load_saved_tokens,
+            credentials::save_saved_token,
             spotify_local::local_spotify_snapshot,
             spotify_local::local_spotify_command,
             spotify_local::export_spotify_connector,
@@ -1049,6 +1089,26 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod credential_settings_tests {
+    #[test]
+    fn settings_secrets_are_removed_from_the_plain_settings_document() {
+        let settings: super::StoredSettings = serde_json::from_value(serde_json::json!({
+            "calendarId":"primary", "spotifyClientSecret":"example-spotify-secret", "googleClientSecret":"example-google-secret",
+            "githubUpdateToken":"example-update-token", "adsbApiKey":"example-aircraft-key", "icalCalendarUrl":"https://calendar.example.com/private-feed"
+        })).unwrap();
+        let (public, secrets) = super::split_settings_secrets(&settings);
+        let public_json = serde_json::to_string(&public).unwrap();
+        assert!(!public_json.contains("example-"));
+        assert!(!public_json.contains("private-feed"));
+        assert_eq!(public.calendar_id.as_deref(),Some("primary"));
+        assert_eq!(secrets.spotify_client_secret.as_deref(),Some("example-spotify-secret"));
+        assert_eq!(secrets.github_update_token.as_deref(),Some("example-update-token"));
+        assert!(super::has_settings_secrets(&settings));
+        assert!(!super::has_settings_secrets(&public));
+    }
 }
 
 #[cfg(test)]

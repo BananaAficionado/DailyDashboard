@@ -6,6 +6,7 @@ authors = ["BananaAficionado"]
 license = ""
 repository = "https://github.com/BananaAficionado/DailyDashboard"
 edition = "2021"
+rust-version = "1.90"
 
 [lib]
 name = "ultrawide_daily_dashboard_lib"
@@ -15,6 +16,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+keyring = { version = "4.2", default-features = false, features = ["v1"] }
+chacha20poly1305 = "0.10"
 base64 = "0.22"
 getrandom = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

@@ -36,3 +36,8 @@ coverage/
 playwright-report/
 test-results/
 release-private/
+
+# Encrypted credentials and per-installation pairing keys
+**/credentials.enc
+**/credentials.pending
+**/spotify-bridge-key

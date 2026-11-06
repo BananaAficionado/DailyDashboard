@@ -9,7 +9,7 @@ For layout bugs, include your OS, app version, display resolution, application s
 You’ll need:
 
 - Node.js 22 and npm.
-- Stable Rust, installed through [rustup](https://www.rust-lang.org/tools/install).
+- Rust 1.90 or newer, installed through [rustup](https://www.rust-lang.org/tools/install).
 - [Tauri’s system dependencies](https://v2.tauri.app/start/prerequisites/): Xcode Command Line Tools on macOS; Microsoft C++ Build Tools and WebView2 on Windows.
 
 ```sh
@@ -122,6 +122,8 @@ For layout work, these narrower checks are also available:
 | `npm run test:design` | Display sizes, application scaling, dialogs, and settings | `/tmp/daily-dashboard-review` |
 | `npm run test:widgets` | Each widget at all four sizes, across display and scaling combinations | `/tmp/daily-dashboard-widget-matrix` |
 
+`npm run test:security` checks that the built dashboard runs under its production CSP and blocks injected scripts and unapproved network requests.
+
 Set `UI_REVIEW_OUTPUT` to change the design-review output directory. The scripts delete their temporary Chrome profiles when finished and keep the screenshots.
 
 Reference captures: [full dashboard](docs/images/dashboard-1280x400.jpg), [Spotify](docs/images/spotify-widget.jpg), [weather](docs/images/weather-widget.jpg), and [clock](docs/images/clock-widget.jpg).
@@ -191,3 +193,5 @@ This checks tracked files for credential patterns and accidentally committed loc
 The updater reads GitHub Releases and verifies downloaded assets against GitHub’s SHA-256 digest. Notifications are enabled by default; automatic downloads and installation require opting in. Windows supports installation and rollback. macOS installation is manual. Implementation details are in [startup updates](docs/startup-updates.md).
 
 For the README video and GIF export commands, see [demo media](docs/demo-video.md).
+
+Security reports and credential storage are covered in [SECURITY.md](SECURITY.md).

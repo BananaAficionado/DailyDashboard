@@ -1,3 +1,4 @@
+import { loadStoredTokens } from "./tokenStorage";
 import {
   Bot,
   CalendarDays,
@@ -328,9 +329,9 @@ const isMockMode = () => new URLSearchParams(window.location.search).has("mock")
 function App() {
   const [settings, setSettings] = useState<StoredSettings>({});
   const [env, setEnv] = useState<EnvConfig>({});
-  const [googleToken, setGoogleToken] = useState<TokenBundle | null>(() => readToken("google"));
-  const [microsoftToken, setMicrosoftToken] = useState<TokenBundle | null>(() => readToken("microsoft"));
-  const [spotifyToken, setSpotifyToken] = useState<TokenBundle | null>(() => readToken("spotify"));
+  const [googleToken, setGoogleToken] = useState<TokenBundle | null>(null);
+  const [microsoftToken, setMicrosoftToken] = useState<TokenBundle | null>(null);
+  const [spotifyToken, setSpotifyToken] = useState<TokenBundle | null>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [calendarSources, setCalendarSources] = useState<CalendarSource[]>([]);
   const [calendarSourcePanelOpen, setCalendarSourcePanelOpen] = useState(false);
@@ -510,6 +511,10 @@ function App() {
         if (isTauri()) {
           const initial = await invoke<{ env: EnvConfig; settings: StoredSettings }>("load_initial_config");
           setEnv(initial.env);
+          const tokens = await loadStoredTokens((command, args) => invoke(command, args), localStorage);
+          setGoogleToken(tokens.google);
+          setMicrosoftToken(tokens.microsoft);
+          setSpotifyToken(tokens.spotify);
           setSettings({
             calendarId: "primary",
             ...initial.settings,
@@ -627,7 +632,7 @@ function App() {
           },
         });
         const next = normalizeToken(refreshed, existing.refreshToken);
-        writeToken(provider, next);
+        await writeToken(provider, next);
         if (provider === "google") {
           setGoogleToken(next);
         } else if (provider === "microsoft") {
@@ -1507,7 +1512,8 @@ function App() {
     }
   }
 
-  function disconnect(provider: Provider) {
+  async function disconnect(provider: Provider) {
+    if (isTauri()) await invoke("save_saved_token", { provider, token: null });
     localStorage.removeItem(TOKEN_KEYS[provider]);
     setAuthStatus(`${provider} disconnected`);
     if (provider === "google") {
@@ -1602,7 +1608,7 @@ function App() {
     });
 
     const bundle = normalizeToken(token);
-    writeToken(provider, bundle);
+    await writeToken(provider, bundle);
     if (provider === "google") {
       setGoogleToken(bundle);
     } else if (provider === "microsoft") {
@@ -2220,7 +2226,7 @@ function App() {
           onSave={saveSettings}
           onClose={() => setSetupOpen(false)}
           onConnect={(provider) => connect(provider).catch((err) => setError(friendlyAuthError(String(err), credentials.googleClientId, googleClientSource)))}
-          onDisconnect={disconnect}
+          onDisconnect={(provider) => disconnect(provider).catch(err => setError(String(err)))}
           onFindWeatherLocation={findWeatherLocation}
           onResolveCurrentWeatherLocation={resolveCurrentWeatherLocation}
           onSaveLayout={(layout) => saveSettings({ ...settings, widgetLayout: layout })}
@@ -3887,17 +3893,9 @@ function MeetingReminder({ event, onDismiss }: { event: CalendarEvent; onDismiss
   );
 }
 
-function readToken(provider: Provider): TokenBundle | null {
-  try {
-    const raw = localStorage.getItem(TOKEN_KEYS[provider]);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeToken(provider: Provider, token: TokenBundle) {
-  localStorage.setItem(TOKEN_KEYS[provider], JSON.stringify(token));
+async function writeToken(provider: Provider, token: TokenBundle) {
+  if (isTauri()) await invoke("save_saved_token", { provider, token });
+  localStorage.removeItem(TOKEN_KEYS[provider]);
 }
 
 function normalizeToken(token: { access_token: string; refresh_token?: string; expires_in?: number; scope?: string }, fallbackRefresh?: string): TokenBundle {

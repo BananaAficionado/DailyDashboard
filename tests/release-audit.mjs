@@ -20,7 +20,7 @@ function inspect(content, location) {
 }
 for (const path of files) {
   if (!existsSync(path)) continue; // Pending deletions are excluded from publication.
-  if (/(?:^|\/)(?:keys\.env|\.env(?:\..+)?|dashboard-settings[^/]*\.json|[^/]*\.(?:pem|key|p12|pfx|p8|sqlite3?|db))$/i.test(path)
+  if (/(?:^|\/)(?:keys\.env|credentials\.(?:enc|pending)|spotify-bridge-key|\.env(?:\..+)?|dashboard-settings[^/]*\.json|[^/]*\.(?:pem|key|p12|pfx|p8|sqlite3?|db))$/i.test(path)
       && !path.endsWith('.env.example')) failures.push(`${path}: local credential/state file`);
   const bytes = readFileSync(path);
   if (!bytes.includes(0)) inspect(bytes.toString('utf8'), path);
