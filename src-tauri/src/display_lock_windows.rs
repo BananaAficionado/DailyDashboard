@@ -9,6 +9,7 @@ use tauri::{
     tray::TrayIconBuilder,
     AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
 };
+use windows::Win32::Foundation::HWND;
 
 #[derive(Clone)]
 struct NormalFrame {
@@ -252,7 +253,7 @@ pub fn info(app: &AppHandle) -> Result<DisplayLockInfo, String> {
             let current_id = app
                 .get_webview_window("main")
                 .and_then(|w| w.hwnd().ok())
-                .and_then(|h| platform::current_id(h, &displays));
+                .and_then(|h| platform::current_id(HWND(h.0), &displays));
             Ok(DisplayLockInfo {
                 supported: true,
                 displays,
@@ -430,7 +431,7 @@ pub fn setup(app: &AppHandle) -> Result<(), String> {
     let service = app.state::<DisplayLock>();
     service
         .guard
-        .install(window.hwnd().map_err(|e| e.to_string())?)?;
+        .install(HWND(window.hwnd().map_err(|e| e.to_string())?.0))?;
     let loaded = crate::read_settings(app);
     {
         let mut state = service
