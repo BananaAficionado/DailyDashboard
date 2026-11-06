@@ -1,0 +1,184 @@
+import { cleanupTestBrowser } from "./browser-cleanup.mjs";
+import { spawn } from "node:child_process";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const width = Number(process.argv[2] || 1280);
+const height = Number(process.argv[3] || 480);
+const scale = Number(process.argv[4] || 100);
+const appPort = Number(process.argv[5] || 4173);
+const debugPort = 9200 + (width === 1920 ? 300 : 0) + scale;
+const baseUrl = `http://127.0.0.1:${appPort}/?mock=1&calendarTall=1&scale=${scale}&responsiveSmoke=${width}x${height}`;
+const userDataDir = await mkdtemp(join(tmpdir(), "daily-dashboard-responsive-"));
+const chrome = spawn(chromePath, [
+  "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+  `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`, "about:blank",
+], { stdio: "ignore" });
+
+try {
+  await waitForHttp(`http://127.0.0.1:${debugPort}/json/version`);
+  const target = await (await fetch(`http://127.0.0.1:${debugPort}/json/new?${baseUrl}`, { method: "PUT" })).json();
+  const cdp = await connectCdp(target.webSocketDebuggerUrl);
+  await cdp.send("Page.enable");
+  await cdp.send("Runtime.enable");
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+  await cdp.send("Page.navigate", { url: baseUrl });
+  await delay(700);
+
+  await assertEval(cdp, `innerWidth === ${width} && innerHeight === ${height}`, `viewport is exactly ${width}x${height}`);
+  await assertEval(cdp, `document.querySelector('.app-shell')?.classList.contains('app-scale-${scale}')`, `application scale is ${scale}%`);
+  await assertEval(cdp, "!document.querySelector('.rail-button[title=\"Codex\"]')", "Codex rail control is excluded by the release flag");
+  await assertEval(cdp, `(() => {
+    const marker = document.querySelector('.weather-current-time');
+    const graph = document.querySelector('.weather-day-graph');
+    const button = document.querySelector('.weather-radar-toggle');
+    if (!marker || !graph || !button || !marker.textContent.trim()) return false;
+    const m = marker.getBoundingClientRect(), g = graph.getBoundingClientRect(), style = getComputedStyle(button);
+    return m.left >= g.left - 1 && m.left <= g.right + 1 && m.top >= g.top - 1 && m.bottom <= g.bottom + 1 &&
+      style.color !== style.backgroundColor && style.webkitTextFillColor !== style.backgroundColor;
+  })()`, "today's weather graph contains a labelled current-time line and Radar has contrasting text");
+
+  await click(cdp, ".weather-rain-history-toggle");
+  await assertEval(cdp, "document.querySelector('.weather-rain-history-toggle')?.textContent.trim() === 'Rain 1h' && Boolean(document.querySelector('.rain-history-1h'))", "rain history opens at one hour");
+  await click(cdp, ".weather-rain-history-toggle");
+  await assertEval(cdp, "document.querySelector('.weather-rain-history-toggle')?.textContent.trim() === 'Rain 24h' && document.querySelectorAll('.rain-history-24h .rain-history-column').length === 24", "rain history switches to 24 hours");
+  await click(cdp, ".weather-rain-history-toggle");
+  await assertEval(cdp, "document.querySelector('.weather-rain-history-toggle')?.textContent.trim() === 'Rain history' && !document.querySelector('.rain-history-page')", "rain history returns to forecast");
+
+  await click(cdp, ".rail-settings");
+  await assertEval(cdp, "![...document.querySelectorAll('.provider-panel strong')].some(node => node.textContent.trim() === 'Codex') && ![...document.querySelectorAll('.widget-order button')].some(node => node.textContent.trim() === 'Codex')", "Codex settings and layout controls are excluded");
+  await click(cdp, ".setup-panel header button[title='Close']");
+
+  const calendarMetrics = await evaluate(cdp, `(() => {
+    const panel = document.querySelector('[data-widget="calendar"] .calendar-panel');
+    const bar = panel?.querySelector('.topbar');
+    const bounds = bar?.getBoundingClientRect();
+    return { panelClass: panel?.className, width: bounds?.width, controls: [...(bar?.querySelectorAll('button') || [])].map(button => { const rect = button.getBoundingClientRect(); return { name: button.title || button.textContent.trim(), left: Math.round(rect.left), right: Math.round(rect.right), top: Math.round(rect.top), bottom: Math.round(rect.bottom), width: Math.round(rect.width), barRight: Math.round(bounds.right) }; }) };
+  })()`);
+  console.log(`Calendar compact metrics: ${JSON.stringify(calendarMetrics)}`);
+
+  await assertEval(cdp, `(() => {
+    const panel = document.querySelector('[data-widget="calendar"] .calendar-panel');
+    const bar = panel?.querySelector('.topbar');
+    if (!panel?.classList.contains('calendar-widget-size-tall') || !bar) return false;
+    const bounds = bar.getBoundingClientRect();
+    const required = ['Today', 'Previous', 'Next', 'Search', 'Show calendars', 'Day', 'Work: Monday–Friday, 9 AM–6 PM', 'Week', 'Hide Calendar'];
+    const buttons = [...bar.querySelectorAll('button')].filter(button => required.includes(button.title || button.textContent.trim()));
+    const occupied = buttons.map(button => button.getBoundingClientRect());
+    const overlapFree = occupied.every((rect, index) => occupied.slice(index + 1).every(other => rect.right <= other.left + 1 || other.right <= rect.left + 1 || rect.bottom <= other.top + 1 || other.bottom <= rect.top + 1));
+    return buttons.length === required.length && overlapFree && buttons.every(button => {
+      const rect = button.getBoundingClientRect();
+      const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return rect.width > 0 && rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1 && (top === button || button.contains(top));
+    });
+  })()`, "one-column calendar retains visible, unobstructed navigation, sources, search and Day/Work/Week controls");
+
+  await assertEval(cdp, "!document.querySelector('[data-widget=\"calendar\"] .calendar-source-sidebar') && document.querySelector('[data-widget=\"calendar\"] .calendar-card').classList.contains('sources-collapsed')", "one-column calendar source selector collapses into an overlay");
+  await click(cdp, "[data-widget='calendar'] .calendar-sources-button");
+  await assertEval(cdp, "document.querySelector('[data-widget=\"calendar\"] .source-panel-content') && document.querySelector('[data-widget=\"calendar\"] .calendar-source-sidebar').getBoundingClientRect().width > 100", "calendar source overlay can still be opened");
+  await assertEval(cdp, "getComputedStyle(document.querySelector('.calendar-source-sidebar')).position === 'absolute'", "calendar sources open as an overlay");
+  await click(cdp, ".calendar-sources-button");
+  await assertEval(cdp, "!document.querySelector('.calendar-source-sidebar')", "closing sources restores all event space");
+
+  await cdp.send("Page.navigate", { url: `${baseUrl}&empty=1` });
+  await delay(400);
+  await assertEval(cdp, `(() => { const grid = document.querySelector('.dashboard-grid'); const idle = document.querySelector('.empty-dashboard'); if (!grid || !idle) return false; const g = grid.getBoundingClientRect(); const i = idle.getBoundingClientRect(); return grid.scrollHeight <= grid.clientHeight + 1 && grid.scrollWidth <= grid.clientWidth + 1 && i.width <= g.width + 1 && i.height <= g.height + 1 && i.left >= g.left - 1 && i.top >= g.top - 1; })()`, "no-widgets screen remains fitted without scrolling");
+  await assertEval(cdp, "Number(getComputedStyle(document.querySelector('.idle-background-picker')).opacity) === 1", "idle background selector initially remains visible for the rail hide interval");
+  await delay(3100);
+  await assertEval(cdp, "Number(getComputedStyle(document.querySelector('.idle-background-picker')).opacity) === 0", "idle background selector hides after the rail hide interval");
+  await click(cdp, ".idle-background-picker button[title='Fish pond']");
+  await assertEval(cdp, "['Orange roughy','Blue cod','Snapper','Sea perch','Gemfish'].every(species => document.querySelector(`.pixel-fish[aria-label='${species}']`)) && new Set([...document.querySelectorAll('.pixel-fish')].map(fish => fish.getAttribute('class'))).size >= 5", "pixel fish pond contains five distinct requested species");
+  await evaluate(cdp, `(() => { const pond = document.querySelector('.pixel-fish-pond'); const bounds = pond.getBoundingClientRect(); pond.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: bounds.left + bounds.width * .62, clientY: bounds.top + bounds.height * .42 })); })()`);
+  await delay(350);
+  await assertEval(cdp, "new Set([...document.querySelectorAll('.pixel-fish-lane')].map(fish => fish.style.transform)).size === 9 && [...document.querySelectorAll('.pixel-fish-lane')].every(fish => ['seeking-cursor','circling-cursor'].includes(fish.dataset.behaviour))", "each fish independently steers toward or circles the cursor");
+  await evaluate(cdp, `(() => {
+    const pond = document.querySelector('.pixel-fish-pond');
+    const bounds = pond.getBoundingClientRect();
+    const fish = [...document.querySelectorAll('.pixel-fish-lane')].map(node => { const rect = node.getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; });
+    const origin = fish[0];
+    const candidates = Array.from({ length: 16 }, (_, index) => {
+      const angle = index / 16 * Math.PI * 2;
+      return { x: Math.max(bounds.left + 35, Math.min(bounds.right - 35, origin.x + Math.cos(angle) * 78)), y: Math.max(bounds.top + 35, Math.min(bounds.bottom - 35, origin.y + Math.sin(angle) * 78)) };
+    });
+    const target = candidates.sort((a, b) => Math.min(...fish.map(item => Math.hypot(item.x - b.x, item.y - b.y))) - Math.min(...fish.map(item => Math.hypot(item.x - a.x, item.y - a.y))))[0];
+    pond.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7, clientX: target.x, clientY: target.y }));
+  })()`);
+  await delay(80);
+  await assertEval(cdp, "document.querySelectorAll('.pixel-fish-food i').length === 7 && [...document.querySelectorAll('.pixel-fish-lane')].some(fish => fish.dataset.behaviour === 'seeking-food')", "fish food is placed and takes priority over the cursor");
+  await delay(3200);
+  await assertEval(cdp, "document.querySelectorAll('.pixel-fish-food').length === 0", "a fish reaches and eats the food");
+  await evaluate(cdp, "document.querySelector('.pixel-fish-pond').dispatchEvent(new PointerEvent('pointerout', { bubbles: true, relatedTarget: null }))");
+  await delay(120);
+  await assertEval(cdp, "[...document.querySelectorAll('.pixel-fish-lane')].every(fish => fish.dataset.behaviour === 'wandering')", "fish gently return to autonomous swimming when the cursor leaves");
+  await click(cdp, ".idle-background-picker button[title='Stars']");
+  await assertEval(cdp, "document.querySelectorAll('.background-star').length >= 250 && document.querySelectorAll('.constellation-line').length > 0 && document.querySelector('.night-sky')?.getAttribute('aria-label').includes('Melbourne')", "night sky renders a location-aware star field and projected constellations");
+  await evaluate(cdp, "document.querySelector('.constellation-hit-line')?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))");
+  await delay(80);
+  await assertEval(cdp, "Boolean(document.querySelector('.constellation-popup')) && Number.parseFloat(getComputedStyle(document.querySelector('.constellation-hit-line')).strokeWidth) >= 18 && document.querySelectorAll('.constellation-hit-star').length > 0", "the enlarged constellation hover region opens its information popup");
+  await click(cdp, ".idle-background-picker button[title='Topographic']");
+  await assertEval(cdp, "document.querySelector('.idle-topographic-map .interactive-map')?.dataset.zoom === '12' && Boolean(document.querySelector('.idle-topographic-map .map-controls')) && !document.querySelector('.idle-topographic-map .map-attribution')", "topographic background is closer, interactive, and source labels are hidden");
+  const terrainStart = await evaluate(cdp, "document.querySelector('.idle-topographic-map .interactive-map')?.dataset.centerLatitude + ',' + document.querySelector('.idle-topographic-map .interactive-map')?.dataset.centerLongitude");
+  await delay(1800);
+  await assertEval(cdp, `document.querySelector('.idle-topographic-map .interactive-map')?.dataset.centerLatitude + ',' + document.querySelector('.idle-topographic-map .interactive-map')?.dataset.centerLongitude !== ${JSON.stringify(terrainStart)} && Boolean(document.querySelector('.idle-topographic-map')?.dataset.tourFeature)`, "topographic background gently tours terrain waypoints");
+  await click(cdp, ".idle-background-picker button[title='Slideshow']");
+  await assertEval(cdp, "document.querySelector('.idle-slideshow-message')?.textContent.includes('Please select an album folder from the settings menu') && document.querySelector('.empty-dashboard-content')?.classList.contains('is-hidden')", "slideshow gives the required folder guidance without overlapping no-widget text");
+
+  console.log(`Responsive widget smoke test passed at ${width}x${height} / ${scale}%`);
+  await cdp.close();
+} finally {
+  await cleanupTestBrowser(chrome, userDataDir);
+}
+
+async function click(cdp, selector) {
+  await assertEval(cdp, `Boolean(document.querySelector(${JSON.stringify(selector)}))`, `missing ${selector}`);
+  await cdp.send("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(selector)}).click()`, awaitPromise: true });
+  await delay(80);
+}
+
+async function evaluate(cdp, expression) {
+  const result = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+  return result.result.result.value;
+}
+
+async function assertEval(cdp, expression, message) {
+  if (!await evaluate(cdp, expression)) throw new Error(message);
+}
+
+async function connectCdp(url) {
+  const ws = new WebSocket(url);
+  const callbacks = new Map();
+  let id = 0;
+  await new Promise((resolve, reject) => {
+    ws.addEventListener("open", resolve, { once: true });
+    ws.addEventListener("error", reject, { once: true });
+  });
+  ws.addEventListener("message", (event) => {
+    const message = JSON.parse(event.data);
+    if (message.id && callbacks.has(message.id)) {
+      const { resolve, reject } = callbacks.get(message.id);
+      callbacks.delete(message.id);
+      message.error ? reject(new Error(JSON.stringify(message.error))) : resolve(message);
+    }
+  });
+  return {
+    send(method, params = {}) {
+      const callId = ++id;
+      ws.send(JSON.stringify({ id: callId, method, params }));
+      return new Promise((resolve, reject) => callbacks.set(callId, { resolve, reject }));
+    },
+    close() { ws.close(); },
+  };
+}
+
+async function waitForHttp(url) {
+  const started = Date.now();
+  while (Date.now() - started < 8000) {
+    try { if ((await fetch(url)).ok) return; } catch {}
+    await delay(120);
+  }
+  throw new Error(`Timed out waiting for ${url}`);
+}
+
+function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }

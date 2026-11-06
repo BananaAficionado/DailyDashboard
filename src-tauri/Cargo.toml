@@ -1,0 +1,33 @@
+[package]
+name = "ultrawide-daily-dashboard"
+version = "0.5.12"
+description = "A 1280x400 desktop dashboard for Google Calendar and Spotify."
+authors = ["BananaAficionado"]
+license = ""
+repository = "https://github.com/BananaAficionado/DailyDashboard"
+edition = "2021"
+
+[lib]
+name = "ultrawide_daily_dashboard_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+getrandom = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rfd = "0.15"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tokio = { version = "1", features = ["time"] }
+url = "2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+tauri-plugin-single-instance = "=2.4.5"
+tauri = { version = "2", features = ["tray-icon"] }
+windows = { version = "0.61.3", features = ["Foundation", "Media_Control", "Storage_Streams", "Win32_System_WinRT", "Win32_Devices_Display", "Win32_Graphics_Gdi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

@@ -1,0 +1,206 @@
+/* Shared Apple Weather inspired surfaces. Widget geometry lives in styles.css. */
+:root {
+  --bg: #141a2e;
+  --bg-elev: #202e49;
+  --panel: #25324e;
+  --panel-2: #304160;
+  --panel-3: #3c5072;
+  --text: #f6f8ff;
+  --text-dim: #d0daf0;
+  --text-faint: #aebbd5;
+  --blue: #8bcaff;
+  --green: #80deb8;
+  --amber: #f0d49c;
+  --red: #ffb9b7;
+  --border: #dce8ff16;
+  --border-strong: #dce8ff30;
+  --hover: #dce8ff12;
+  --selected: #b2e1ff;
+  --menu-bg: #293b59f5;
+  --shadow: 0 15px 60px #08102566;
+  --glass: linear-gradient(130deg, #a6bded16, #a6bded08);
+  --control: #a6bded16;
+  --control-selected: #bfdcff26;
+  --atmosphere: radial-gradient(ellipse at 12% 4%, #42446b99, transparent 60%),
+    radial-gradient(ellipse at 90% 95%, #38628d66, transparent 65%),
+    linear-gradient(155deg, #141a32, #263a5b);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+.app-shell { background: var(--atmosphere); }
+.dashboard-grid { background: transparent; }
+.dashboard-widget { border-color: #dce8ff16; border-radius: 16px; background: transparent; }
+.widget-panel.widget-panel, .calendar-panel, .clock-widget { color: var(--text); background: var(--atmosphere); }
+.rail { border-color: var(--border); background: #192540e8; backdrop-filter: blur(18px); }
+.rail-button, .icon-button, .play-button, .layout-hide-button { border-radius: 50%; }
+.rail-button.bottom { background: var(--control); }
+.rail-button.active { color: #ddf2ff; background: var(--control-selected); box-shadow: inset 0 0 0 1px #b3deff26; }
+.rail-button:hover, .icon-button:hover { background: #b4d2ff20; }
+.rail-button svg, .icon-button svg { stroke-width: 1.7; }
+.widget-title { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-dim); font-weight: 500; letter-spacing: -.02em; }
+.widget-title > svg { flex: 0 0 auto; stroke-width: 1.7; }
+.widget-title > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spotify-header, .terminal-header, .codex-header, .clock-widget-header, .aircraft-header { color: var(--text-dim); font-weight: 500; }
+.spotify-header, .terminal-header, .codex-header { border-radius: 10px; }
+.terminal-header small, .codex-header small { color: var(--text-faint); font-weight: 400; font-size: 10px; line-height: 1.2; }
+.clock-widget-header, .aircraft-header { background: #17213b30; border-bottom: 1px solid var(--border); }
+.clock-widget-header strong { color: var(--text-dim); font-weight: 500; letter-spacing: -.02em; }
+
+/* Music: pale controls, a soft cover, and a clear type hierarchy. */
+.spotify-panel .album-cover { border-radius: 16px; box-shadow: 0 12px 30px #09122e44, 0 0 0 1px #deebff15; }
+.spotify-panel .album-cover.placeholder { display: grid; place-items: center; background: var(--glass); color: #c8e5ff80; }
+.spotify-panel .album-cover.placeholder > svg { width: 36%; height: 36%; max-width: 64px; max-height: 64px; }
+.spotify-panel .track-copy strong { color: var(--text); font-weight: 400; letter-spacing: -.025em; }
+.spotify-panel .track-copy span { color: var(--text-dim); font-weight: 400; }
+.spotify-panel .track-copy small, .spotify-panel .time-row { color: var(--text-faint); font-weight: 400; }
+.spotify-panel .playback-status { color: #b2e1ff; font-weight: 400; }
+.spotify-panel .scrubber { background-image: linear-gradient(#b8e2ff, #b8e2ff); background-color: #c6dfff25; }
+.spotify-panel .player-controls .play-button { color: #1c304e; background: #d6edff; box-shadow: 0 2px 10px #081b3120; }
+.spotify-panel .player-controls .play-button:hover { background: #e9f7ff; }
+.spotify-panel .player-controls .icon-button { color: var(--text-dim); }
+.spotify-panel .player-controls .liked { color: var(--green); }
+.spotify-panel .spotify-connect-button { border-color: #bddfff38; color: var(--text); background: var(--control); font-weight: 500; }
+.spotify-panel .volume-popover { border-color: var(--border-strong); border-radius: 16px; background: var(--menu-bg); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
+.spotify-panel .volume-slider { accent-color: var(--blue); }
+.spotify-panel .volume-slider::-webkit-slider-runnable-track { background: #c6dfff25; }
+
+/* Clock: a glass dial, restrained numerals, and a translucent agenda. */
+.clock-widget .clock-zone-button { border-color: var(--border); color: var(--text-dim); background: var(--control); border-radius: 20px; }
+.clock-widget .clock-face-toggle { border-color: transparent; border-radius: 20px; background: #0d183647; }
+.clock-widget .clock-face-toggle button { border-radius: 20px; color: var(--text-faint); font-weight: 500; }
+.clock-widget .clock-face-toggle button.active { color: var(--text); background: var(--control-selected); box-shadow: none; }
+.clock-widget .analog-clock { background: radial-gradient(circle at 40% 32%, #9dbce52c, #101e3b44 80%); box-shadow: inset 0 0 0 1px #deebff20, 0 10px 30px #09122e22; }
+.clock-widget .clock-number { color: var(--text-dim); font-weight: 400; }
+.clock-widget .second-hand, .clock-widget .second-hand::after { background: #9edcff; }
+.clock-widget .clock-pin { border-color: #b2e1ff; background: #273a58; }
+.clock-widget .digital-time { color: var(--text); text-shadow: none; letter-spacing: -.025em; }
+.clock-widget .digital-time b { color: #c3dbf99c; }
+.clock-widget .digital-time small { color: #a4dcff; font-weight: 400; }
+.clock-widget .digital-date, .clock-widget .analog-clock-caption { color: var(--text-faint); }
+.clock-widget .digital-date strong, .clock-widget .analog-clock-caption strong { color: var(--text-dim); font-weight: 500; }
+.clock-widget .clock-agenda { border-color: var(--border); background: var(--glass); }
+.clock-widget .clock-agenda-heading { border-color: var(--border); }
+.clock-widget .clock-agenda-heading > span { color: var(--text); font-weight: 400; }
+.clock-widget .clock-agenda-heading small { color: var(--text-faint); }
+.clock-widget .clock-agenda-item { border-radius: 8px; border-bottom-color: var(--border); }
+.clock-widget .clock-agenda-item strong { color: var(--text); font-weight: 500; }
+.clock-widget .clock-agenda-details { border-color: var(--border); background: var(--menu-bg); backdrop-filter: blur(18px); }
+.clock-widget .clock-agenda-details-body { color: var(--text-dim); }
+.clock-widget .clock-zone-popover { border-color: var(--border-strong); border-radius: 17px; background: var(--menu-bg); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
+.clock-widget .clock-zone-popover > span { color: var(--text-faint); }
+.clock-widget .clock-zone-options button { border-radius: 9px; color: var(--text-dim); }
+.clock-widget .clock-zone-options button.selected { color: var(--text); background: var(--control-selected); font-weight: 500; box-shadow: none; }
+.clock-widget .clock-zone-options button:hover { background: var(--hover); }
+
+/* Aircraft keeps altitude colours while its map chrome matches weather radar. */
+.aircraft-header button:not(.icon-button), .aircraft-map-toolbar button { border-radius: 20px; border-color: #dce8ff22; background: #a6bded20; color: var(--text-dim); font-weight: 400; }
+.aircraft-header button.selected { background: var(--control-selected); color: var(--text); }
+.aircraft-map-wrap .map-controls { border-color: #dce8ff35; border-radius: 20px; background: #273044e8; box-shadow: 0 3px 12px #0002; backdrop-filter: blur(16px); }
+.aircraft-map-wrap .map-controls button { color: #eef5ff; background: transparent; }
+.aircraft-map-wrap .map-controls button + button { border-color: #e1ebff22; }
+.aircraft-map-wrap .map-monochrome .map-base-tile { filter: grayscale(1) invert(.9) brightness(.78) contrast(.8); }
+.aircraft-map-toolbar { border: 1px solid #dce8ff20; border-radius: 16px; background: #273044e8; backdrop-filter: blur(16px); }
+.aircraft-map-wrap .map-attribution { border-radius: 6px; background: #273044d9; color: #e0e9fa; }
+.aircraft-detail { border-color: #cbe2ff35; border-radius: 16px; background: var(--menu-bg); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
+.aircraft-detail strong { font-weight: 500; }
+.aircraft-detail span, .aircraft-detail dt { color: var(--text-faint); }
+.map-feed-error { color: var(--red); background: #562b43ed; border-radius: 10px; }
+
+/* Terminal and optional Codex content retain their functional type and status colours. */
+.terminal-panel .terminal-screen, .terminal-panel .terminal-composer { border-color: var(--border); border-radius: 16px; background: #10213c66; color: var(--text-dim); }
+.terminal-panel .terminal-entry + .terminal-entry { border-color: var(--border); }
+.terminal-panel .terminal-prompt strong { color: #b2e1ff; font-weight: 500; }
+.terminal-panel .terminal-entry small, .terminal-panel .terminal-prompt span, .terminal-panel .terminal-empty, .terminal-panel .terminal-running { color: var(--text-faint); font-weight: 400; }
+.terminal-panel .terminal-entry .terminal-error { color: var(--red); }
+.terminal-panel .terminal-composer { color: var(--blue); }
+.terminal-panel .terminal-composer button { border-radius: 50%; background: var(--control); }
+.codex-panel .codex-usage > div, .codex-panel .codex-progress, .codex-panel .codex-approval-card { border-color: var(--border); border-radius: 16px; background: var(--glass); }
+.codex-panel .codex-usage span, .codex-panel .codex-progress span, .codex-panel .codex-progress small, .codex-panel .codex-approval-card span { color: var(--text-faint); font-weight: 400; }
+.codex-panel .codex-phase strong, .codex-panel .codex-usage strong, .codex-panel .codex-approval-card strong { color: var(--text); font-weight: 500; }
+.codex-panel .codex-progress p { color: var(--text-dim); }
+.codex-panel .codex-composer textarea, .codex-panel .codex-approvals select { border-color: var(--border-strong); border-radius: 12px; background: #10213c66; color: var(--text); }
+.codex-panel .codex-composer button { border-radius: 50%; background: var(--control-selected); color: var(--text); }
+
+/* Settings: a stable dialog with glass groups, pill actions and clear selected states. */
+.setup-backdrop { background: #07122599; backdrop-filter: blur(12px); }
+.setup-panel { border-color: #cbe2ff30; border-radius: 22px; background: var(--atmosphere); box-shadow: var(--shadow); }
+.setup-panel > header, .settings-footer { background: #19254066; border-color: var(--border); }
+.setup-panel h2 { font-weight: 400; letter-spacing: -.02em; font-size: 19px; }
+.settings-nav { border-color: var(--border); background: #13213c40; }
+.setup-panel .settings-nav button { border-radius: 12px; color: var(--text-dim); border-color: transparent; font-weight: 400; }
+.setup-panel .settings-nav button.selected { color: #ecf8ff; background: var(--control-selected); border-color: #b3deff22; }
+.setup-panel .settings-nav button.selected svg { color: #b2e1ff; }
+.settings-content .provider-panel { padding: 12px; border: 1px solid #e1ebff08; border-radius: 16px; background: var(--glass); }
+.provider-panel strong { color: var(--text); font-weight: 500; }
+.provider-panel span, .provider-panel small { color: var(--text-faint); }
+.setup-panel input:not([type="range"]):not([type="checkbox"]), .setup-panel select, .setup-panel textarea { border-color: var(--border-strong); border-radius: 10px; color: var(--text); background: #10213c66; }
+.setup-panel input::placeholder, .setup-panel textarea::placeholder { color: var(--text-faint); }
+.setup-panel input[type="checkbox"], .setup-panel input[type="range"] { accent-color: #a5d8ff; }
+.setup-panel :is(.settings-content, .settings-footer) button:where(:not(.icon-button)) { border-radius: 20px; background: var(--control); border-color: var(--border-strong); color: var(--text-dim); }
+.setup-panel button.selected:where(:not(.settings-nav button)) { color: var(--text); background: var(--control-selected); border-color: #b3deff50; }
+.setup-panel button.connected { color: #b9f4dd; border-color: #a7eac744; background: #7dddb510; }
+.setup-panel button.settings-save { color: #1b304a; background: #c4e7ff; border-color: transparent; font-weight: 500; }
+.setup-panel > header .settings-close-button { border-radius: 50%; background: var(--control); }
+.setup-panel button.rollback-button { color: #f1d3bf; border-color: #efbf9433; background: #efbf9410; }
+.setup-panel .setup-grid label, .setup-panel .calendar-style-setting { font-weight: 400; }
+.setup-panel .advanced-grid { border-color: var(--border); }
+.setup-panel .update-status, .setup-panel .update-settings details { color: var(--text-dim); }
+.setup-panel .rollback-settings small { color: var(--text-faint); }
+.setup-panel .rollback-settings strong { color: var(--text); font-weight: 500; }
+
+/* Empty states, reminders and layout controls belong to the same visual family. */
+.empty-dashboard-content .empty-dashboard-icon { border-radius: 50%; border-color: var(--border-strong); background: #a6bded16; color: #d4ecff; }
+.empty-dashboard-content > strong { font-weight: 400; letter-spacing: -.02em; }
+.empty-dashboard-action { border-radius: 20px; border-color: #cbe2ff30; background: #a6bded20; color: var(--text); }
+.idle-background-picker { border-color: #dce8ff25; border-radius: 20px; background: #1e2d47db; backdrop-filter: blur(18px); }
+.empty-dashboard .idle-background-picker button { border-radius: 14px; font-weight: 400; }
+.empty-dashboard .idle-background-picker button.selected, .empty-dashboard .idle-background-picker button.selected span { color: var(--text); background-color: var(--control-selected); }
+.empty-dashboard .idle-background-picker button.selected span { background: transparent; }
+.widget-layout-bar { border-color: #cbe2ff35; border-radius: 16px; background: #243552e8; box-shadow: var(--shadow); }
+.drag-handle, .layout-hide-button, .drop-target { border-color: #cbe2ff35; border-radius: 12px; background: #a6bded20; }
+.widget-layout-bar > span, .drop-target { font-weight: 500; }
+.toast { border-color: #eab2b23d; border-radius: 16px; background: #382941f5; color: #ffe2df; box-shadow: var(--shadow); }
+.meeting-reminder { border-color: #cbe2ff35; border-radius: 20px; background: var(--menu-bg); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
+.meeting-reminder strong { font-weight: 400; }
+.meeting-reminder span { color: var(--text-dim); font-weight: 400; }
+:focus-visible { outline: 2px solid #b2e1ff; outline-offset: -2px; }
+@container widget (max-height: 260px) {
+  .aircraft-map-toolbar { border-color: transparent; border-radius: 12px; background: transparent; backdrop-filter: none; }
+  .aircraft-map-toolbar button { background: #273044e8; }
+  .terminal-panel .terminal-screen, .terminal-panel .terminal-composer { border-radius: 12px; }
+}
+@container widget (max-width: 280px) {
+  .widget-title { gap: 4px; }
+  .widget-title > svg { width: 13px; height: 13px; }
+}
+@media (max-height: 320px) {
+  .setup-panel { border-radius: 16px; }
+}
+.codex-panel .codex-content { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; gap: 10px; overflow: auto; overscroll-behavior: contain; }
+.codex-panel .codex-content > * { flex-shrink: 0; }
+.codex-panel .codex-content .codex-progress { flex: 1 0 100px; min-height: 100px; overflow: auto; }
+.codex-panel .codex-composer { flex-shrink: 0; }
+.codex-panel.compact .codex-content .codex-progress { flex-basis: 70px; min-height: 70px; }
+.codex-panel .codex-phase, .codex-panel .codex-progress p { flex-shrink: 0; }
+@container widget (max-height: 180px) {
+  .codex-panel.compact { padding: 8px; gap: 5px; }
+  .codex-panel.compact .codex-header { height: 24px; }
+  .codex-panel.compact .codex-header small { display: none; }
+  .codex-panel.compact .codex-composer textarea { min-height: 30px; max-height: 40px; padding: 6px; }
+  .codex-panel.compact .codex-composer button { width: 30px; height: 30px; }
+}
+
+.constellation-popup { border-color: #cbe2ff35; border-radius: 16px; color: var(--text); background: var(--menu-bg); box-shadow: var(--shadow); }
+.idle-slideshow-message { background: var(--atmosphere); color: var(--text-dim); }
+.map-controls { border-radius: 20px; border-color: #dce8ff35; background: #273044e8; }
+.map-controls button { background: transparent; color: #eef5ff; }
+.map-controls button + button { border-color: #e1ebff22; }
+
+@container widget (max-width: 280px) {
+  .codex-panel .codex-usage { grid-template-columns: minmax(0, 1fr); }
+  .codex-panel .codex-usage > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+}
+/* Header actions keep one line in short, highly scaled aircraft widgets. */
+.aircraft-header > div { flex-shrink: 0; }
+.aircraft-header button:not(.icon-button) { height: 26px; white-space: nowrap; line-height: 1; }

@@ -1,0 +1,40 @@
+{
+  "name": "ultrawide-daily-dashboard",
+  "private": true,
+  "version": "0.5.12",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node tests/static-checks.mjs && node tests/drag-layout-mock.mjs && node --experimental-strip-types tests/ical-recurrence.mjs && node --experimental-strip-types tests/map-tiles.mjs && node --experimental-strip-types tests/calendar-layout.mjs && node --experimental-strip-types tests/weather.mjs && node --experimental-strip-types tests/spotify-local.mjs",
+    "test:ui": "node tests/ui-smoke.mjs",
+    "test:short": "node tests/short-viewport.mjs",
+    "test:maps": "node tests/map-layout-smoke.mjs",
+    "test:responsive": "node tests/responsive-widget-smoke.mjs",
+    "test:clock": "node tests/clock-widget-smoke.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:portable": "tauri build --no-bundle",
+    "tauri:build:windows-cross": "tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --no-bundle",
+    "test:design": "node tests/design-review.mjs",
+    "test:widgets": "node tests/widget-size-matrix.mjs",
+    "audit:release": "node tests/release-audit.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.6.0",
+    "@tauri-apps/plugin-opener": "^2.3.0",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.6.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7"
+  }
+}
