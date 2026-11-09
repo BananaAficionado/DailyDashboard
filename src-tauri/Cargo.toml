@@ -18,7 +18,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 keyring = { version = "4.2", default-features = false, features = ["v1"] }
 chacha20poly1305 = "0.10"
-base64 = "0.22"
+base64 = "0.23"
 getrandom = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rfd = "0.15"
