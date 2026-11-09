@@ -48,7 +48,8 @@ import { IdleDashboard, type IdleBackgroundKind, type SlideshowFit } from "./Idl
 import { meetingMinutes, calendarViewDays, normalizeCalendarView, type CalendarViewMode } from "./calendarLayout";
 import { DisplayLockSetting, readDisplayLockInfo, type DisplayBinding } from "./DisplayLockSetting";
 import { CalendarTimeline } from "./CalendarTimeline";
-import { buildWeatherDays, formatWeatherTime, upcomingWeatherDays, weatherHourIndex, weatherLocalTime, weatherMidnightDelay, weatherSolarState, type WeatherData, type WeatherDay } from "./weather";
+import { buildWeatherDays, formatWeatherTime, upcomingWeatherDays, weatherHourIndex, weatherLocalTime, weatherSolarState, type WeatherData, type WeatherDay } from "./weather";
+import { useLocalClock } from "./useLocalClock";
 import { ClockWidget, type ClockAgendaItem, type ClockFaceMode } from "./ClockWidget";
 
 import { localCommandValue, localMediaItem, normalizeSpotifyMode, type SpotifyAction, type SpotifyControls, type LocalSpotifySnapshot, type SpotifyControlMode } from "./spotifyLocal";
@@ -279,7 +280,7 @@ const DEFAULT_CODEX_OPEN_URL = "codex://threads/new";
 const DEFAULT_CODEX_WEB_URL = "https://chatgpt.com/codex";
 const DEFAULT_ADSB_API_URL = "https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{radius}";
 const APP_SCALES: AppScale[] = [75, 100, 125, 150, 175, 200];
-const APP_VERSION = "V0.5.13";
+const APP_VERSION = "V0.5.14";
 const RAIL_HIDE_DELAY_MS = 3_000;
 const EMPTY_DASHBOARD_IDLE_DELAY_MS = 15_000;
 const featureFlag = (value: unknown, defaultEnabled = true) => {
@@ -354,15 +355,19 @@ function App() {
   const [terminalEntries, setTerminalEntries] = useState<TerminalEntry[]>([]);
   const [terminalRunning, setTerminalRunning] = useState(false);
   const [weather, setWeather] = useState<WeatherData | null>(null);
-  const [weatherNow, setWeatherNow] = useState(weatherClockNow);
+  const { now: weatherNow } = useLocalClock(weather?.timezone, weatherClockNow);
   const weatherLoadedLocation = useRef("");
   const weatherDate = weatherLocalTime(weatherNow, weather?.timezone)?.date;
   const [aircraft, setAircraft] = useState<Aircraft[]>([]);
   const [aircraftError, setAircraftError] = useState("");
   const [weatherQuery, setWeatherQuery] = useState("");
   const [weatherSearching, setWeatherSearching] = useState(false);
-  const [now, setNow] = useState(new Date());
-  const [currentDate, setCurrentDate] = useState(() => startOfDay(new Date()));
+  const calendarTimeZone = normalizeTimeZone(settings.googleCalendarTimeZone);
+  const { now, refresh: refreshCalendarClock } = useLocalClock(calendarTimeZone);
+  const calendarToday = dateKeyInTimeZone(now, calendarTimeZone);
+  const [browsedCalendarDate, setCurrentDate] = useState(() => startOfDay(new Date()));
+  const [calendarFollowsToday, setCalendarFollowsToday] = useState(true);
+  const currentDate = useMemo(() => calendarFollowsToday ? dateFromKey(calendarToday) : browsedCalendarDate, [calendarFollowsToday, calendarToday, browsedCalendarDate]);
   const viewMode = normalizeCalendarView(settings.calendarViewMode);
   function setViewMode(next: ViewMode) { saveSettings({ ...settings, calendarViewMode: next }).catch(err => setError(String(err))); }
   const [searchOpen, setSearchOpen] = useState(false);
@@ -479,9 +484,8 @@ function App() {
   }), [calendarSources]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
+    if (calendarFollowsToday) setExpandedEventId(null);
+  }, [calendarToday, calendarFollowsToday]);
 
   useEffect(() => {
     if (calendarNarrow) setCalendarSourcePanelOpen(false);
@@ -652,15 +656,16 @@ function App() {
     [credentials.googleClientId, credentials.googleClientSecret, credentials.microsoftClientId, credentials.spotifyClientId, credentials.spotifyClientSecret]
   );
 
-  const loadMicrosoftCalendar = useCallback(async (token: TokenBundle) => {
+  const loadMicrosoftCalendar = useCallback(async (token: TokenBundle, signal?: AbortSignal) => {
     const headers = { Authorization: `Bearer ${token.accessToken}` };
     const timeMin = new Date(zonedIsoWithOffset(dateKey(visibleDays[0]), credentials.googleCalendarTimeZone)).toISOString();
     const timeMax = new Date(zonedIsoWithOffset(dateKey(addDays(visibleDays[visibleDays.length - 1], 1)), credentials.googleCalendarTimeZone)).toISOString();
-    const sourceResponse = await fetch("https://graph.microsoft.com/v1.0/me/calendars?$select=id,name,color,canEdit&$top=100", { headers });
+    const sourceResponse = await fetch("https://graph.microsoft.com/v1.0/me/calendars?$select=id,name,color,canEdit&$top=100", { headers, signal, cache: "no-cache" });
     if (!sourceResponse.ok) {
       throw new Error(`Microsoft calendar list failed: ${sourceResponse.status}`);
     }
     const sourceData = await sourceResponse.json();
+    if (signal?.aborted) return;
     const sources: CalendarSource[] = (sourceData.value || []).map((source: { id: string; name?: string; color?: string; canEdit?: boolean }) => ({
       id: source.id,
       summary: source.name || source.id,
@@ -681,7 +686,7 @@ function App() {
       url.searchParams.set("$top", "80");
       url.searchParams.set("$orderby", "start/dateTime");
       url.searchParams.set("$select", "id,subject,bodyPreview,location,start,end,isAllDay,webLink,organizer,attendees");
-      const response = await fetch(url, { headers });
+      const response = await fetch(url, { headers, signal, cache: "no-cache" });
       if (!response.ok) {
         throw new Error(`${source.summary}: ${response.status}`);
       }
@@ -689,6 +694,7 @@ function App() {
       return (data.value || []).map((event: MicrosoftGraphEvent) => microsoftEventToCalendarEvent(event, source));
     }));
     const loadedEvents = results.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+    if (signal?.aborted) return;
     const failures = results.filter((result) => result.status === "rejected");
     if (failures.length && !loadedEvents.length) {
       throw new Error(`Microsoft calendar request failed: ${failures.map((result) => String((result as PromiseRejectedResult).reason)).join(", ")}`);
@@ -696,25 +702,26 @@ function App() {
     setEvents(loadedEvents);
   }, [credentials.googleCalendarTimeZone, settings.selectedCalendarIds, visibleDays]);
 
-  const loadIcalCalendar = useCallback(async () => {
+  const loadIcalCalendar = useCallback(async (signal?: AbortSignal) => {
     const feedUrl = normalizeIcalCalendarUrl(settings.icalCalendarUrl);
     if (!feedUrl) {
       return;
     }
     const feedText = isTauri()
       ? await invoke<string>("fetch_icalendar", { url: feedUrl })
-      : await fetch(feedUrl).then(async (response) => {
+      : await fetch(feedUrl, { signal, cache: "no-cache" }).then(async (response) => {
           if (!response.ok) {
             throw new Error(`iCalendar feed returned HTTP ${response.status}`);
           }
           return response.text();
         });
+    if (signal?.aborted) return;
     const parsed = parseIcalendarFeed(feedText, feedUrl, visibleDays);
     setCalendarSources([parsed.source]);
     setEvents(parsed.events);
   }, [settings.icalCalendarUrl, visibleDays]);
 
-  const loadCalendar = useCallback(async () => {
+  const loadCalendar = useCallback(async (signal?: AbortSignal) => {
     if (isMockMode()) {
       const sources = mockCalendarSources();
       const activeSourceIds = settings.selectedCalendarIds
@@ -727,24 +734,26 @@ function App() {
 
     if (normalizeIcalCalendarUrl(settings.icalCalendarUrl)) {
       try {
-        await loadIcalCalendar();
+        await loadIcalCalendar(signal);
       } catch (err) {
-        setError(String(err));
+        if (!signal?.aborted) throw err;
       }
       return;
     }
 
     const microsoft = await ensureToken("microsoft", microsoftToken);
+    if (signal?.aborted) return;
     if (microsoft && credentials.microsoftClientId) {
       try {
-        await loadMicrosoftCalendar(microsoft);
+        await loadMicrosoftCalendar(microsoft, signal);
       } catch (err) {
-        setError(String(err));
+        if (!signal?.aborted) throw err;
       }
       return;
     }
 
     const token = await ensureToken("google", googleToken);
+    if (signal?.aborted) return;
     if (!token || !credentials.googleClientId) {
       return;
     }
@@ -752,11 +761,12 @@ function App() {
       const timeMin = zonedIsoWithOffset(dateKey(visibleDays[0]), credentials.googleCalendarTimeZone);
       const timeMax = zonedIsoWithOffset(dateKey(addDays(visibleDays[visibleDays.length - 1], 1)), credentials.googleCalendarTimeZone);
       const headers = { Authorization: `Bearer ${token.accessToken}` };
-      const sourceResponse = await fetch("https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader", { headers });
+      const sourceResponse = await fetch("https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader", { headers, signal, cache: "no-cache" });
       let sources: CalendarSource[] = [];
 
       if (sourceResponse.ok) {
         const sourceData = await sourceResponse.json();
+        if (signal?.aborted) return;
         sources = (sourceData.items || [])
           .map((source: CalendarSource) => ({
             id: source.id,
@@ -768,6 +778,7 @@ function App() {
           }));
       }
 
+      if (signal?.aborted) return;
       if (!sources.length) {
         sources = [{ id: credentials.calendarId, summary: credentials.calendarId }];
       }
@@ -790,7 +801,7 @@ function App() {
         url.searchParams.set("timeMax", timeMax);
         url.searchParams.set("timeZone", credentials.googleCalendarTimeZone);
         url.searchParams.set("maxResults", "80");
-        const response = await fetch(url, { headers });
+        const response = await fetch(url, { headers, signal, cache: "no-cache" });
         if (!response.ok) {
           throw new Error(`${source.summary}: ${response.status}`);
         }
@@ -805,13 +816,14 @@ function App() {
       }));
 
       const loadedEvents = results.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      if (signal?.aborted) return;
       const failures = results.filter((result) => result.status === "rejected");
       if (failures.length && !loadedEvents.length) {
         throw new Error(`Calendar request failed: ${failures.map((result) => String((result as PromiseRejectedResult).reason)).join(", ")}`);
       }
       setEvents(loadedEvents);
     } catch (err) {
-      setError(String(err));
+      if (!signal?.aborted) throw err;
     }
   }, [credentials.calendarId, credentials.googleCalendarTimeZone, credentials.googleClientId, credentials.microsoftClientId, ensureToken, googleToken, loadIcalCalendar, loadMicrosoftCalendar, microsoftToken, settings.icalCalendarUrl, settings.selectedCalendarIds, visibleDays]);
 
@@ -954,8 +966,42 @@ function App() {
   }
 
   useEffect(() => {
-    loadCalendar();
-  }, [loadCalendar]);
+    if (!configLoaded) return;
+    const controller = new AbortController();
+    let pending = false, lastCompleted = -Infinity, retry: number | undefined;
+    const refresh = async () => {
+      const elapsed = Date.now() - lastCompleted;
+      if (controller.signal.aborted || pending || (elapsed >= 0 && elapsed < 5_000)) return;
+      pending = true;
+      window.clearTimeout(retry);
+      try {
+        await loadCalendar(controller.signal);
+        lastCompleted = Date.now();
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setError(String(error));
+          retry = window.setTimeout(refresh, 60_000);
+        }
+      } finally { pending = false; }
+    };
+    const resume = () => {
+      // A new local day will re-render and request its new range. Do not start
+      // an obsolete-range request from the previous render's event listener.
+      if (dateKeyInTimeZone(new Date(), calendarTimeZone) === calendarToday) void refresh();
+    };
+    const visible = () => { if (document.visibilityState === "visible") resume(); };
+    void refresh();
+    window.addEventListener("focus", resume);
+    window.addEventListener("online", resume);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      controller.abort();
+      window.clearTimeout(retry);
+      window.removeEventListener("focus", resume);
+      window.removeEventListener("online", resume);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [loadCalendar, calendarToday, calendarTimeZone, configLoaded]);
 
   useEffect(() => {
     spotifyAbort.current?.abort();
@@ -1003,26 +1049,6 @@ function App() {
     };
   }, [settings.weatherLocation, weatherDate]);
 
-  useEffect(() => {
-    let midnight: number;
-    const updateWeatherClock = () => {
-      const time = weatherClockNow();
-      setWeatherNow(time);
-      window.clearTimeout(midnight);
-      midnight = window.setTimeout(updateWeatherClock, weatherMidnightDelay(time, weather?.timezone));
-    };
-    const resume = () => { if (document.visibilityState === "visible") updateWeatherClock(); };
-    updateWeatherClock();
-    const timer = window.setInterval(updateWeatherClock, 30_000);
-    window.addEventListener("focus", updateWeatherClock);
-    document.addEventListener("visibilitychange", resume);
-    return () => {
-      window.clearInterval(timer);
-      window.clearTimeout(midnight);
-      window.removeEventListener("focus", updateWeatherClock);
-      document.removeEventListener("visibilitychange", resume);
-    };
-  }, [weather?.timezone]);
 
   const loadAircraft = useCallback(async () => {
     const location = settings.adsbLocation || settings.weatherLocation;
@@ -1067,6 +1093,8 @@ function App() {
         settings.weatherLocation ? loadWeather(settings.weatherLocation) : Promise.resolve(),
       ]);
       setAuthStatus("Refreshed");
+    } catch (error) {
+      setError(String(error));
     } finally {
       window.setTimeout(() => setIsRefreshing(false), 250);
     }
@@ -1120,6 +1148,7 @@ function App() {
     const nextCursor = (searchCursor + 1) % matches.length;
     const nextEvent = matches[nextCursor];
     setSearchCursor(nextCursor);
+    setCalendarFollowsToday(false);
     setCurrentDate(dateFromKey(eventDateKey(nextEvent.start.dateTime, nextEvent.start.date, credentials.googleCalendarTimeZone)));
     if (viewMode !== "work") setViewMode("day");
     setError("");
@@ -2136,11 +2165,11 @@ function App() {
             ) : widget === "calendar" ? (
               <section className={`calendar-panel calendar-widget-size-${widgetSize(widget)} calendar-style-${calendarStyle}`}>
                 <header className="topbar">
-                  <button className="today-button" onClick={() => setCurrentDate(dateFromKey(dateKeyInTimeZone(new Date(), credentials.googleCalendarTimeZone)))}>Today</button>
-                  <button className="icon-button" title="Previous" onClick={() => setCurrentDate(addDays(currentDate, viewMode === "day" ? -1 : -7))}>
+                  <button className="today-button" onClick={() => { refreshCalendarClock(); setCalendarFollowsToday(true); }}>Today</button>
+                  <button className="icon-button" title="Previous" onClick={() => { setCalendarFollowsToday(false); setCurrentDate(addDays(currentDate, viewMode === "day" ? -1 : -7)); }}>
                     <ChevronLeft size={21} />
                   </button>
-                  <button className="icon-button" title="Next" onClick={() => setCurrentDate(addDays(currentDate, viewMode === "day" ? 1 : 7))}>
+                  <button className="icon-button" title="Next" onClick={() => { setCalendarFollowsToday(false); setCurrentDate(addDays(currentDate, viewMode === "day" ? 1 : 7)); }}>
                     <ChevronRight size={21} />
                   </button>
                   <div className="date-heading">

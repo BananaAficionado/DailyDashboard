@@ -24,7 +24,7 @@ assert(
 assert(
   appSource.includes("onToggleFullscreen") &&
     appSource.includes("<strong>Application</strong>") &&
-    appSource.includes('const APP_VERSION = "V0.5.13"') &&
+    appSource.includes('const APP_VERSION = "V0.5.14"') &&
     appSource.includes("Version {APP_VERSION}") &&
     appSource.includes("Toggle Full Screen") &&
     cssSource.includes(".settings-action-button") &&
@@ -33,11 +33,11 @@ assert(
 );
 
 assert(
-  tauriConfig.version === "0.5.13" &&
-    tauriConfig.mainBinaryName === "V0.5.13_Daily-Dashboard" &&
+  tauriConfig.version === "0.5.14" &&
+    tauriConfig.mainBinaryName === "V0.5.14_Daily-Dashboard" &&
     tauriConfig.bundle.windows.nsis.installerHooks === "installer-hooks.nsh" &&
     tauriConfig.bundle.targets.includes("nsis"),
-  "release metadata is V0.5.13 with the prefixed main binary name and NSIS hooks"
+  "release metadata is V0.5.14 with the prefixed main binary name and NSIS hooks"
 );
 
 assert(

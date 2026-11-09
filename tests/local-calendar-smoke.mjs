@@ -17,7 +17,8 @@ try {
  const screenshot=async name=>{const r=await cdp.send('Page.captureScreenshot',{format:'png'});await writeFile(join(output,name+'.png'),Buffer.from(r.result.data,'base64'));};
  for(const [width,height,scale,dpr] of [[1280,480,100,1],[1280,480,200,1],[2560,800,200,1],[1280,400,100,2]]) for(const size of ['half','tall','wide','full']) {
   await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:dpr,mobile:false});
-  await cdp.send('Page.navigate',{url:`${base}/?mock=1&widget=calendar&widgetSize=${size}&scale=${scale}&calendarStress=1&calendarView=work`});await delay(400);
+  await cdp.send('Page.navigate',{url:`${base}/?mock=1&widget=calendar&widgetSize=${size}&scale=${scale}&calendarStress=1&calendarView=work`});
+  for(let attempt=0;attempt<100;attempt++){if(await evaluate(`Boolean(document.querySelector('.timed-event'))`))break;await delay(50);}
   const point=await evaluate(`(()=>{const n=document.querySelector('.timed-event'),r=n.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
   await cdp.send('Input.dispatchMouseEvent',{type:'mouseMoved',...point});await delay(300);
   await check(`(()=>{const p=document.querySelector('.calendar-hover-preview'),r=p?.getBoundingClientRect(),c=document.querySelector('.calendar-timeline').getBoundingClientRect(),b=document.querySelector('.calendar-hover-backdrop');return r&&r.left>=c.left-.5&&r.right<=c.right+.5&&r.top>=c.top-.5&&r.bottom<=c.bottom+.5&&b&&getComputedStyle(b).pointerEvents==='none'&&!p.contains(document.activeElement)&&!document.querySelector('.calendar-event-dialog')})()`,'hover preview missing, clipped, or stole focus');

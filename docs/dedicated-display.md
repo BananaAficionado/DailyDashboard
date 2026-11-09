@@ -30,13 +30,13 @@ The installer adds **Daily Dashboard - Recover display** to the Windows Start me
 From PowerShell in the installation folder:
 
 ```powershell
-.\V0.5.13_Daily-Dashboard.exe --unlock-display
+.\V0.5.14_Daily-Dashboard.exe --unlock-display
 ```
 
 Or use the executable's actual path, including quotes for spaces:
 
 ```powershell
-& "C:\path\to\V0.5.13_Daily-Dashboard.exe" --unlock-display
+& "C:\path\to\V0.5.14_Daily-Dashboard.exe" --unlock-display
 ```
 
 - `--unlock-display`: clear the saved monitor binding, remove confinement, restore a normal window in the main monitor's work area, unminimize and show it. Other saved settings are preserved.

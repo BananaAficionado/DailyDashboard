@@ -330,7 +330,7 @@ async fn check_for_updates(
 ) -> Result<Option<AvailableUpdate>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("DailyDashboard-Updater/0.5.13")
+        .user_agent("DailyDashboard-Updater/0.5.14")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -382,7 +382,7 @@ async fn check_for_rollback(
 ) -> Result<Option<AvailableUpdate>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("DailyDashboard-Updater/0.5.13")
+        .user_agent("DailyDashboard-Updater/0.5.14")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client
@@ -467,7 +467,7 @@ async fn download_update(
         .ok_or_else(|| "This release has no valid SHA-256 digest. Open the GitHub release to download it manually.".to_string())?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
-        .user_agent("DailyDashboard-Updater/0.5.13")
+        .user_agent("DailyDashboard-Updater/0.5.14")
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client

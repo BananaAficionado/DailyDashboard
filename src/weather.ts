@@ -69,21 +69,7 @@ export function weatherLocalTime(value: Date | string, timeZone?: string): { dat
   } catch { return null; }
 }
 
-// Find the next local date boundary rather than assuming a day lasts 24 hours.
-// This also handles DST changes and locations in a different zone from the PC.
-export function weatherMidnightDelay(now: Date, timeZone?: string): number {
-  try {
-    const format = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
-    const today = format.format(now), start = now.getTime();
-    let low = start, high = start + 27 * 60 * 60_000;
-    while (high - low > 1) {
-      const middle = Math.floor((low + high) / 2);
-      if (format.format(new Date(middle)) === today) low = middle;
-      else high = middle;
-    }
-    return high - start;
-  } catch { return 60_000; }
-}
+export { nextLocalMidnightDelay as weatherMidnightDelay } from './localTime.ts';
 
 export function upcomingWeatherDays(days: WeatherDay[], now: Date, timeZone?: string): WeatherDay[] {
   const today = weatherLocalTime(now, timeZone)?.date;

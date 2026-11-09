@@ -9,6 +9,7 @@ const suites = [
   ["tests/local-calendar-smoke.mjs", baseUrl],
   ["tests/weather-solar-smoke.mjs", baseUrl],
   ["tests/weather-rollover-smoke.mjs", baseUrl],
+  ["tests/calendar-rollover-smoke.mjs", baseUrl],
   ["tests/widget-size-matrix.mjs", baseUrl],
   ["tests/design-review.mjs", baseUrl],
   ["tests/short-viewport.mjs", `${baseUrl}/?mock=1`],
