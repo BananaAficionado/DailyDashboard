@@ -24,7 +24,7 @@ Temporary release-check failures retry twice, after 5 and 15 seconds. Dashboard 
 To skip one startup check, run from the installation folder:
 
 ```powershell
-.\V0.5.12_Daily-Dashboard.exe --skip-update
+.\V0.5.13_Daily-Dashboard.exe --skip-update
 ```
 
 The display recovery commands `--unlock-display` and `--reset-display-lock` also skip automatic updates on that launch so recovery cannot immediately restart the app. A relaunch routed to an existing instance does not start another updater.

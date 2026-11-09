@@ -149,7 +149,7 @@ The NSIS installer is written to `src-tauri/target/release/bundle/nsis/`.
 npm run tauri:build:portable
 ```
 
-Output: `src-tauri/target/release/V0.5.12_Daily-Dashboard.exe`.
+Output: `src-tauri/target/release/V0.5.13_Daily-Dashboard.exe`.
 
 The executable can run from a writable folder or USB drive without an installer. WebView2 must already be installed on the target computer.
 

@@ -1,7 +1,7 @@
 {
   "name": "ultrawide-daily-dashboard",
   "private": true,
-  "version": "0.5.12",
+  "version": "0.5.13",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -13,6 +13,7 @@
     "test:maps": "node tests/map-layout-smoke.mjs",
     "test:responsive": "node tests/responsive-widget-smoke.mjs",
     "test:clock": "node tests/clock-widget-smoke.mjs",
+    "test:weather-rollover": "node tests/weather-rollover-smoke.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",

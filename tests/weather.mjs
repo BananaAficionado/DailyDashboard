@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { buildWeatherDays, weatherHourIndex, weatherLocalTime, weatherSolarState, formatWeatherTime } from '../src/weather.ts';
+import { buildWeatherDays, upcomingWeatherDays, weatherHourIndex, weatherLocalTime, weatherMidnightDelay, weatherSolarState, formatWeatherTime } from '../src/weather.ts';
 
 const day = { date: '2026-07-07', sunrise: '2026-07-07T07:30', sunset: '2026-07-07T17:15' };
 const solar = time => weatherSolarState(day, new Date(`2026-07-07T${time}:00+10:00`), 'Australia/Melbourne');
@@ -46,4 +46,25 @@ assert.equal(weatherHourIndex(150,100,0,24),null);
 const days = buildWeatherDays({ daily:{time:[day.date]}, hourly:{time:[`${day.date}T09:00`,`${day.date}T10:00`,`${day.date}T11:00`,`${day.date}T12:00`],temperature_2m:[12,14,16,18],precipitation:[1,0,2,0],precipitation_probability:[64,0,null,110]} });
 assert.deepEqual(days[0].hourly.map(hour=>hour.precipProbability),[64,0,null,100], 'hourly probability is independent of rainfall amount; null is unavailable');
 assert.equal(days[0].hourly[1].temp,14);
+for (const [instant, zone, expected] of [
+  ['2026-12-31T23:59:59.875+11:00', 'Australia/Melbourne', 125],
+  ['2027-01-01T00:00:00+11:00', 'Australia/Melbourne', 24 * 60 * 60_000],
+  ['2026-03-08T00:00:00-05:00', 'America/New_York', 23 * 60 * 60_000],
+  ['2026-11-01T00:00:00-04:00', 'America/New_York', 25 * 60 * 60_000],
+  ['2026-10-04T00:00:00+10:00', 'Australia/Melbourne', 23 * 60 * 60_000],
+  ['2026-04-05T00:00:00+11:00', 'Australia/Melbourne', 25 * 60 * 60_000],
+  ['2026-07-07T13:59:59Z', 'Australia/Melbourne', 1_000],
+]) {
+  const now = new Date(instant), delay = weatherMidnightDelay(now, zone);
+  assert.equal(delay, expected, `${zone} midnight at ${instant}`);
+  assert.equal(weatherLocalTime(new Date(+now + delay - 1), zone).date, weatherLocalTime(now, zone).date);
+  assert.notEqual(weatherLocalTime(new Date(+now + delay), zone).date, weatherLocalTime(now, zone).date);
+}
+assert.equal(weatherMidnightDelay(new Date('invalid'), 'UTC'), 60_000);
+assert.equal(weatherMidnightDelay(new Date(), 'invalid/timezone'), 60_000);
+const rolloverDays = ['2026-12-31','2027-01-01','2027-01-02'].map(date => ({...days[0],date}));
+assert.deepEqual(upcomingWeatherDays(rolloverDays,new Date('2026-12-31T13:00Z'),'Australia/Melbourne').map(day=>day.date),['2027-01-01','2027-01-02']);
+assert.deepEqual(upcomingWeatherDays(rolloverDays,new Date('2026-12-31T13:00Z'),'America/Los_Angeles').map(day=>day.date),['2026-12-31','2027-01-01','2027-01-02']);
+assert.deepEqual(upcomingWeatherDays(rolloverDays,new Date('2027-01-04T00:00Z'),'Australia/Melbourne'),[],'expired forecasts must not masquerade as today after sleep');
 console.log('Weather hourly probability, scaled pointer selection, location time/DST, solar position and continuous dawn/dusk/night transitions passed');
+console.log('Weather midnight scheduling, DST, year rollover and expired forecast filtering passed');

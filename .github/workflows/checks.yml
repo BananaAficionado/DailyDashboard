@@ -46,3 +46,4 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run test:security
+      - run: npm run test:weather-rollover

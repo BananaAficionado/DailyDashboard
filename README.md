@@ -12,7 +12,7 @@ Built for a **1280 × 400 companion display**, with calendar, music, weather, an
 
 - **Calendar:** day, workweek, and week views with event details.
 - **Spotify:** album artwork, track details, and desktop playback controls.
-- **Weather:** current conditions, hourly and five-day forecasts, and rain radar.
+- **Weather:** current conditions, hourly and five-day forecasts, and rain radar. The forecast advances at midnight in the weather location's time zone and catches up after sleep.
 - **Clock:** analog and digital faces with time zone selection.
 - **Layout:** move, resize, stack, or hide widgets.
 

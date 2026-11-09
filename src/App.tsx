@@ -48,7 +48,7 @@ import { IdleDashboard, type IdleBackgroundKind, type SlideshowFit } from "./Idl
 import { meetingMinutes, calendarViewDays, normalizeCalendarView, type CalendarViewMode } from "./calendarLayout";
 import { DisplayLockSetting, readDisplayLockInfo, type DisplayBinding } from "./DisplayLockSetting";
 import { CalendarTimeline } from "./CalendarTimeline";
-import { buildWeatherDays, formatWeatherTime, weatherHourIndex, weatherLocalTime, weatherSolarState, type WeatherData, type WeatherDay } from "./weather";
+import { buildWeatherDays, formatWeatherTime, upcomingWeatherDays, weatherHourIndex, weatherLocalTime, weatherMidnightDelay, weatherSolarState, type WeatherData, type WeatherDay } from "./weather";
 import { ClockWidget, type ClockAgendaItem, type ClockFaceMode } from "./ClockWidget";
 
 import { localCommandValue, localMediaItem, normalizeSpotifyMode, type SpotifyAction, type SpotifyControls, type LocalSpotifySnapshot, type SpotifyControlMode } from "./spotifyLocal";
@@ -279,7 +279,7 @@ const DEFAULT_CODEX_OPEN_URL = "codex://threads/new";
 const DEFAULT_CODEX_WEB_URL = "https://chatgpt.com/codex";
 const DEFAULT_ADSB_API_URL = "https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{radius}";
 const APP_SCALES: AppScale[] = [75, 100, 125, 150, 175, 200];
-const APP_VERSION = "V0.5.12";
+const APP_VERSION = "V0.5.13";
 const RAIL_HIDE_DELAY_MS = 3_000;
 const EMPTY_DASHBOARD_IDLE_DELAY_MS = 15_000;
 const featureFlag = (value: unknown, defaultEnabled = true) => {
@@ -354,6 +354,9 @@ function App() {
   const [terminalEntries, setTerminalEntries] = useState<TerminalEntry[]>([]);
   const [terminalRunning, setTerminalRunning] = useState(false);
   const [weather, setWeather] = useState<WeatherData | null>(null);
+  const [weatherNow, setWeatherNow] = useState(weatherClockNow);
+  const weatherLoadedLocation = useRef("");
+  const weatherDate = weatherLocalTime(weatherNow, weather?.timezone)?.date;
   const [aircraft, setAircraft] = useState<Aircraft[]>([]);
   const [aircraftError, setAircraftError] = useState("");
   const [weatherQuery, setWeatherQuery] = useState("");
@@ -968,10 +971,58 @@ function App() {
     }
     if (!settings.weatherLocation) {
       setWeather(null);
+      weatherLoadedLocation.current = "";
       return;
     }
-    loadWeather(settings.weatherLocation).catch((err) => setError(String(err)));
-  }, [settings.weatherLocation]);
+    const location = settings.weatherLocation;
+    if (weatherLoadedLocation.current === `${location.latitude},${location.longitude}` && weather?.days[0]?.date === weatherDate) return;
+    const controller = new AbortController();
+    let retry: number | undefined, pending = false, complete = false;
+    const refresh = async () => {
+      if (controller.signal.aborted || pending || complete) return;
+      window.clearTimeout(retry);
+      pending = true;
+      try {
+        const loaded = await loadWeather(location, controller.signal);
+        complete = Boolean(loaded && loaded.date === weatherLocalTime(weatherClockNow(), loaded.timezone)?.date);
+        // The provider may briefly serve yesterday's cached response at midnight.
+        if (!complete && !controller.signal.aborted) retry = window.setTimeout(refresh, 60_000);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setError(String(error));
+          retry = window.setTimeout(refresh, 60_000);
+        }
+      } finally { pending = false; }
+    };
+    void refresh();
+    window.addEventListener("online", refresh);
+    return () => {
+      controller.abort();
+      window.clearTimeout(retry);
+      window.removeEventListener("online", refresh);
+    };
+  }, [settings.weatherLocation, weatherDate]);
+
+  useEffect(() => {
+    let midnight: number;
+    const updateWeatherClock = () => {
+      const time = weatherClockNow();
+      setWeatherNow(time);
+      window.clearTimeout(midnight);
+      midnight = window.setTimeout(updateWeatherClock, weatherMidnightDelay(time, weather?.timezone));
+    };
+    const resume = () => { if (document.visibilityState === "visible") updateWeatherClock(); };
+    updateWeatherClock();
+    const timer = window.setInterval(updateWeatherClock, 30_000);
+    window.addEventListener("focus", updateWeatherClock);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(midnight);
+      window.removeEventListener("focus", updateWeatherClock);
+      document.removeEventListener("visibilitychange", resume);
+    };
+  }, [weather?.timezone]);
 
   const loadAircraft = useCallback(async () => {
     const location = settings.adsbLocation || settings.weatherLocation;
@@ -1715,7 +1766,7 @@ function App() {
     } catch (error) { setError(String(error)); }
   }
 
-  async function loadWeather(location: WeatherLocation) {
+  async function loadWeather(location: WeatherLocation, signal?: AbortSignal) {
     const url = new URL("https://api.open-meteo.com/v1/forecast");
     url.searchParams.set("latitude", String(location.latitude));
     url.searchParams.set("longitude", String(location.longitude));
@@ -1725,11 +1776,12 @@ function App() {
     url.searchParams.set("timezone", "auto");
     url.searchParams.set("forecast_days", "5");
     url.searchParams.set("past_hours", "24");
-    const response = await fetch(url);
+    const response = await fetch(url, { signal, cache: "no-cache" });
     if (!response.ok) {
       throw new Error(`Weather request failed: ${response.status}`);
     }
     const data = await response.json();
+    if (signal?.aborted) return;
     const days = buildWeatherDays(data);
     const today = days[0] || {
       date: new Date().toISOString(),
@@ -1745,6 +1797,7 @@ function App() {
       .map((time: string, index: number) => ({ time, value: Number(data.hourly?.precipitation?.[index] ?? 0) }))
       .filter((item: { time: string }) => !currentWeatherTime || item.time <= currentWeatherTime)
       .slice(-24);
+    weatherLoadedLocation.current = `${location.latitude},${location.longitude}`;
     setWeather({
       timezone: typeof data.timezone === "string" ? data.timezone : undefined,
       currentTemp: Math.round(data.current?.temperature_2m ?? 0),
@@ -1763,6 +1816,7 @@ function App() {
         today.precipProbability
       ),
     });
+    return { date: today.date, timezone: typeof data.timezone === "string" ? data.timezone : undefined };
   }
 
   async function findWeatherLocation(query: string): Promise<WeatherLocation | null> {
@@ -2153,6 +2207,7 @@ function App() {
               <WeatherPanel
                 location={settings.weatherLocation}
                 weather={weather}
+                weatherNow={weatherNow}
                 query={weatherQuery}
                 searching={weatherSearching}
                 compact={widgetCompact("weather")}
@@ -2711,6 +2766,7 @@ function weatherClockNow() {
 function WeatherPanel({
   location,
   weather,
+  weatherNow,
   query,
   searching,
   compact,
@@ -2724,6 +2780,7 @@ function WeatherPanel({
 }: {
   location?: WeatherLocation;
   weather: WeatherData | null;
+  weatherNow: Date;
   query: string;
   searching: boolean;
   compact: boolean;
@@ -2748,11 +2805,11 @@ function WeatherPanel({
   const [radarCenter, setRadarCenter] = useState(() => ({ latitude: location?.latitude || -37.8136, longitude: location?.longitude || 144.9631 }));
   const [radarZoom, setRadarZoom] = useState(7);
   const [radarMonochrome, setRadarMonochrome] = useState(true);
-  const [weatherNow, setWeatherNow] = useState(weatherClockNow);
   const radarFrame = radarFrames[radarFrameIndex] || null;
   const showSetup = !location || settingsOpen;
-  const forecastDays = weather?.days?.length ? weather.days : weather ? [{
-    date: new Date().toISOString(),
+  const localWeatherDate = weatherLocalTime(weatherNow, weather?.timezone)?.date;
+  const availableDays = weather?.days?.length ? weather.days : weather ? [{
+    date: localWeatherDate || "",
     minTemp: weather.minTemp,
     maxTemp: weather.maxTemp,
     uvIndex: weather.uvIndex,
@@ -2760,8 +2817,12 @@ function WeatherPanel({
     precipProbability: weather.precipProbability,
     hourly: weather.hourlyPrecip.map((hour) => ({ time: hour.time, temp: weather.currentTemp, feelsLike: weather.feelsLikeTemp, precip: hour.value })),
   }] : [];
-  const activeDay = forecastDays[Math.min(forecastDayIndex, Math.max(0, forecastDays.length - 1))];
-  const localWeatherDate = weatherLocalTime(weatherNow, weather?.timezone)?.date;
+  const forecastDays = upcomingWeatherDays(availableDays, weatherNow, weather?.timezone);
+  const [selectionDate, setSelectionDate] = useState(localWeatherDate);
+  const activeIndex = selectionDate === localWeatherDate ? Math.min(forecastDayIndex, Math.max(0, forecastDays.length - 1)) : 0;
+  const activeDay = forecastDays[activeIndex];
+  const isToday = activeDay?.date === localWeatherDate;
+  const currentConditions = isToday && availableDays[0]?.date === localWeatherDate;
   const solar = weatherSolarState(forecastDays.find(day => day.date === localWeatherDate), weatherNow, weather?.timezone);
   const visibleRainHistory = weather?.rainHistory?.slice(rainHistoryPeriod === "1h" ? -1 : -24) || [];
   const rainHistoryTotal = visibleRainHistory.reduce((total, item) => total + item.value, 0);
@@ -2774,15 +2835,9 @@ function WeatherPanel({
   }
 
   useEffect(() => {
-    setForecastDayIndex((index) => Math.min(index, Math.max(0, forecastDays.length - 1)));
-  }, [forecastDays.length]);
-
-  useEffect(() => {
-    const updateNow = () => setWeatherNow(weatherClockNow());
-    updateNow();
-    const timer = window.setInterval(updateNow, 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
+    setForecastDayIndex(0);
+    setSelectionDate(localWeatherDate);
+  }, [localWeatherDate, location?.latitude, location?.longitude]);
 
   useEffect(() => {
     if (location) setRadarCenter({ latitude: location.latitude, longitude: location.longitude });
@@ -2821,7 +2876,7 @@ function WeatherPanel({
   }, [page, radarFrames.length, radarPaused]);
 
   return (
-    <section className={`widget-panel weather-panel ${compact ? "compact" : ""} ${narrow ? "narrow" : ""} ${showSetup ? "is-setup" : ""} ${forecastMode === "five" && !rainHistoryPeriod && page === "forecast" ? "weather-five" : ""}`} data-solar-phase={solar.phase} style={{ '--weather-night': solar.night, '--weather-dawn': solar.dawn, '--weather-dusk': solar.dusk } as CSSProperties} onDoubleClick={onFocus}>
+    <section className={`widget-panel weather-panel ${compact ? "compact" : ""} ${narrow ? "narrow" : ""} ${showSetup ? "is-setup" : ""} ${forecastMode === "five" && !rainHistoryPeriod && page === "forecast" ? "weather-five" : ""}`} data-solar-phase={solar.phase} data-forecast-date={activeDay?.date} style={{ '--weather-night': solar.night, '--weather-dawn': solar.dawn, '--weather-dusk': solar.dusk } as CSSProperties} onDoubleClick={onFocus}>
       <div className="weather-header">
         <span className="weather-widget-title"><CloudSun size={16} /><span>Weather</span></span>
         <div className="weather-header-actions">
@@ -2905,24 +2960,24 @@ function WeatherPanel({
           <div className="weather-hero">
             <div className="weather-location">{location.name}<small>{location.admin1 || "Local weather"}</small></div>
             <div className="weather-main">
-              <div className="weather-temperature"><small>{forecastDayIndex === 0 ? "Current conditions" : "Daytime high"}</small><strong>{forecastDayIndex === 0 ? weather.currentTemp : activeDay.maxTemp}°<small>C</small></strong></div>
-              <span className="weather-condition-meta">{forecastDayIndex === 0 ? `Feels like ${weather.feelsLikeTemp}°` : "Daily range"}<small>Low {activeDay.minTemp}° · High {activeDay.maxTemp}°</small></span>
+              <div className="weather-temperature"><small>{currentConditions ? "Current conditions" : "Daytime high"}</small><strong>{currentConditions ? weather.currentTemp : activeDay.maxTemp}°<small>C</small></strong></div>
+              <span className="weather-condition-meta">{currentConditions ? `Feels like ${weather.feelsLikeTemp}°` : "Daily range"}<small>Low {activeDay.minTemp}° · High {activeDay.maxTemp}°</small></span>
             </div>
           </div>
           <div className="forecast-controls">
-            <button onClick={() => setForecastDayIndex((index) => Math.max(0, index - 1))} disabled={forecastMode === "five" || forecastDayIndex === 0} title="Previous forecast day">
+            <button onClick={() => setForecastDayIndex((index) => Math.max(0, index - 1))} disabled={forecastMode === "five" || activeIndex === 0} title="Previous forecast day">
               <ChevronLeft size={16} />
             </button>
             <span title={formatForecastDay(activeDay.date)}>{forecastMode === "five" ? "Next five days" : formatForecastDay(activeDay.date)}</span>
-            <button onClick={() => setForecastDayIndex((index) => Math.min(forecastDays.length - 1, index + 1))} disabled={forecastMode === "five" || forecastDayIndex >= forecastDays.length - 1} title="Next forecast day">
+            <button onClick={() => setForecastDayIndex((index) => Math.min(forecastDays.length - 1, index + 1))} disabled={forecastMode === "five" || activeIndex >= forecastDays.length - 1} title="Next forecast day">
               <ChevronRight size={16} />
             </button>
             <button className={forecastMode === "five" ? "selected" : ""} aria-pressed={forecastMode === "five"} onClick={() => { setForecastDayIndex(0); setForecastMode((mode) => mode === "five" ? "day" : "five"); }}>5 days</button>
           </div>
-          <WeatherMetricCards day={activeDay} weather={weather} isToday={forecastDayIndex === 0} now={weatherNow} />
-          {forecastDayIndex === 0 && weather.alert ? <div className="weather-alert">{weather.alert}</div> : null}
+          <WeatherMetricCards day={activeDay} weather={weather} isToday={isToday} currentConditions={currentConditions} now={weatherNow} />
+          {isToday ? <div className="weather-alert">{weatherAlertText(activeDay.precipTotal, activeDay.uvIndex, activeDay.precipProbability)}</div> : null}
           <div className="weather-visual"><div className="weather-chart-heading"><span><Clock3 size={12} />{forecastMode === "five" ? "5-day forecast" : "Hourly forecast"}</span>{forecastMode !== "five" ? <span className="weather-chart-legend"><i className="legend-temperature" />Temperature<i className="legend-rain" />Rain</span> : null}</div>
-          {forecastMode === "five" ? <FiveDayForecast days={forecastDays.slice(0, 5)} /> : <WeatherDayGraph day={activeDay} narrow={narrow} now={forecastDayIndex === 0 ? weatherNow : undefined} timeZone={weather.timezone} />}</div>
+          {forecastMode === "five" ? <FiveDayForecast days={forecastDays.slice(0, 5)} /> : <WeatherDayGraph day={activeDay} narrow={narrow} now={isToday ? weatherNow : undefined} timeZone={weather.timezone} />}</div>
         </>
       ) : (
         <div className="weather-setup">
@@ -2935,7 +2990,7 @@ function WeatherPanel({
   );
 }
 
-function WeatherMetricCards({ day, weather, isToday, now }: { day: WeatherDay; weather: WeatherData; isToday: boolean; now: Date }) {
+function WeatherMetricCards({ day, weather, isToday, currentConditions, now }: { day: WeatherDay; weather: WeatherData; isToday: boolean; currentConditions: boolean; now: Date }) {
   const uvLabel = day.uvIndex < 3 ? "Low" : day.uvIndex < 6 ? "Moderate" : day.uvIndex < 8 ? "High" : day.uvIndex < 11 ? "Very high" : "Extreme";
   const difference = weather.feelsLikeTemp - weather.currentTemp;
   const solarTime = (value?: string) => formatWeatherTime(value, weather.timezone);
@@ -2944,11 +2999,11 @@ function WeatherMetricCards({ day, weather, isToday, now }: { day: WeatherDay; w
   const solarLabel = sun ? `Sun ${sun.aboveHorizon ? "above" : "below"} the horizon at ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: weather.timezone })}` : `Daylight hours. Sunrise ${solarTime(day.sunrise)}, sunset ${solarTime(day.sunset)}`;
   return <div className="weather-metrics">
     <div className="weather-metric feels-like-card">
-      <h3><Thermometer size={13} />{isToday ? "Feels like" : "Low temperature"}</h3>
-      <strong>{isToday ? weather.feelsLikeTemp : day.minTemp}°</strong>
-      <span className="metric-subtitle">{isToday ? `Actual: ${weather.currentTemp}°` : `High: ${day.maxTemp}°`}</span>
-      <div className="feels-like-scale" aria-hidden="true">{isToday ? <i style={{ left: `${Math.max(4, Math.min(96, 50 + difference * 4))}%` }} /> : null}</div>
-      <p>{isToday ? Math.abs(difference) < 1 ? "Similar to the actual temperature." : `Feels ${Math.abs(difference)}° ${difference < 0 ? "cooler" : "warmer"} than the actual temperature.` : "The expected daily temperature range."}</p>
+      <h3><Thermometer size={13} />{currentConditions ? "Feels like" : "Low temperature"}</h3>
+      <strong>{currentConditions ? weather.feelsLikeTemp : day.minTemp}°</strong>
+      <span className="metric-subtitle">{currentConditions ? `Actual: ${weather.currentTemp}°` : `High: ${day.maxTemp}°`}</span>
+      <div className="feels-like-scale" aria-hidden="true">{currentConditions ? <i style={{ left: `${Math.max(4, Math.min(96, 50 + difference * 4))}%` }} /> : null}</div>
+      <p>{currentConditions ? Math.abs(difference) < 1 ? "Similar to the actual temperature." : `Feels ${Math.abs(difference)}° ${difference < 0 ? "cooler" : "warmer"} than the actual temperature.` : "The expected daily temperature range."}</p>
     </div>
     <div className="weather-metric uv-card">
       <h3><Sun size={13} />UV index</h3><strong>{day.uvIndex}</strong><span className="metric-subtitle">{uvLabel}</span>
@@ -3117,7 +3172,7 @@ function FiveDayForecast({ days }: { days: WeatherDay[] }) {
   const maximum = Math.max(...days.map(day => day.maxTemp));
   const range = Math.max(1, maximum - minimum);
   return <div className="five-day-forecast">
-    {days.map(day => <div className="forecast-day" key={day.date}>
+    {days.map(day => <div className="forecast-day" key={day.date} data-date={day.date}>
       <strong>{new Date(`${day.date}T12:00:00`).toLocaleDateString([], { weekday: "short" })}</strong>
       <span className="forecast-rain"><Droplets size={12} />{day.precipProbability}%</span>
       <span className="forecast-low">{day.minTemp}°</span>
